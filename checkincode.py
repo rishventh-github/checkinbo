@@ -1167,7 +1167,7 @@ async def r(ctx, resetTime: str):
        await ctx.send(f"{ctx.author.mention}, this command is only accessible to admins.")
        return
    if len(resetTime) != 6 or not resetTime.isdigit():
-       await ctx.send(f"{ctx.author.mention}, please enter a 6-digit number (e.g., 235959 for 11:59:59 PM).")
+       await ctx.send(f"{ctx.author.mention}, please enter a 6-digit number (e.g., 235959 for 11:59:59 PM). thanks bro")
        return
 
 
