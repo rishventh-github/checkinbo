@@ -1167,7 +1167,7 @@ async def r(ctx, resetTime: str):
        await ctx.send(f"{ctx.author.mention}, this command is only accessible to admins.")
        return
    if len(resetTime) != 6 or not resetTime.isdigit():
-       await ctx.send(f"{ctx.author.mention}, please enter a 6-digit number (e.g., 235959 for 11:59:59 PM). thanks brochacho")
+       await ctx.send(f"{ctx.author.mention}, please enter a 6-digit number (e.g., 235959 for 11:59:59 PM).")
        return
 
 
@@ -1237,375 +1237,375 @@ async def cr(ctx):
 MAX_EMBED_FIELD_LENGTH = 1024
 
 
-# @bot.command()
-# async def sum(ctx, *, time_range_str: str = None):
-#     """
-#     Summarizes the check-ins received for a specific time range: a date (MM-DD),
-#     'week' (last 7 days), or 'month' (last 30 days).
-#
-#     If no time range is provided, it summarizes check-ins since the last daily reset.
-#     """
-#     data = await get_channel_data(ctx.guild.id, ctx.channel.id)
-#     guild_settings = await get_guild_settings(ctx.guild.id)
-#     timezone_str = guild_settings.get("timezone", "America/Los_Angeles")
-#     reset_hour = guild_settings.get("reset_hour", 0)
-#     reset_minute = guild_settings.get("reset_minute", 0)
-#
-#     try:
-#         guild_tz = pytz.timezone(timezone_str)
-#     except pytz.exceptions.UnknownTimeZoneError:
-#         guild_tz = pytz.timezone("America/Los_Angeles")
-#
-#     google_api_key = os.getenv("GOOGLE_API_KEY")
-#     if not google_api_key:
-#         await ctx.send("ERROR: GOOGLE_API_KEY environment variable not set. Summary command will not work.")
-#         return
-#
-#     if ctx.guild is None:
-#         await ctx.send("This command can only be used in a server channel.")
-#         return
-#
-#     await ctx.typing()
-#
-#     start_time_utc = None
-#     end_time_utc = datetime.now(pytz.utc)
-#     display_range_str = ""
-#     checkin_command_string = f"{ctx.prefix}c"
-#
-#     # --- Time Range Parsing ---
-#     if time_range_str:
-#         time_range_str = time_range_str.strip()
-#
-#         if time_range_str.lower() in ["week", "1week", "7d", "7days"]:
-#             start_time_utc = end_time_utc - timedelta(days=7)
-#             display_range_str = "the last week"
-#
-#         elif time_range_str.lower() in ["month", "1month", "30d", "30days"]:
-#             start_time_utc = end_time_utc - timedelta(days=30)
-#             display_range_str = "the last month"
-#
-#         else:
-#             # Try MM-DD or M-D
-#             match_mm_dd = re.match(r'^\s*(\d{1,2})-(\d{1,2})\s*$', time_range_str)
-#             if match_mm_dd:
-#                 try:
-#                     month = int(match_mm_dd.group(1))
-#                     day = int(match_mm_dd.group(2))
-#                     year = datetime.now().year
-#                     target_date_local = datetime(year, month, day).date()
-#                 except ValueError:
-#                     await ctx.send(f"Invalid date '{time_range_str}'. Please use `MM-DD` with a valid month/day.")
-#                     return
-#             else:
-#                 # Fallback to dateutil parser
-#                 try:
-#                     parsed_datetime_naive = parser.parse(time_range_str)
-#                     target_date_local = parsed_datetime_naive.date()
-#                 except Exception:
-#                     await ctx.send(
-#                         f"Could not understand the time range '{time_range_str}'. Please use a format like `MM-DD`, `week`, or `month`."
-#                     )
-#                     return
-#
-#             # Convert to UTC range
-#             start_of_target_day_naive = datetime.combine(target_date_local, time.min)
-#             end_of_target_day_naive = datetime.combine(target_date_local, time.max)
-#
-#             start_time_utc = guild_tz.localize(start_of_target_day_naive).astimezone(pytz.utc)
-#             end_time_utc = guild_tz.localize(end_of_target_day_naive).astimezone(pytz.utc)
-#
-#             current_guild_date = datetime.now(guild_tz).date()
-#             if target_date_local == current_guild_date:
-#                 display_range_str = "Today"
-#             else:
-#                 display_range_str = target_date_local.strftime('%Y-%m-%d')
-#
-#     else:
-#         # No time range provided — since last reset
-#         last_reset_time_utc = data.get("last_reset_time")
-#         if last_reset_time_utc and isinstance(last_reset_time_utc, datetime) and last_reset_time_utc.tzinfo:
-#             start_time_utc = last_reset_time_utc
-#             display_range_str = "Since Last Reset"
-#         else:
-#             now_guild_tz = datetime.now(guild_tz)
-#             current_day_start_local = now_guild_tz.replace(hour=reset_hour, minute=reset_minute, second=0, microsecond=0)
-#             if now_guild_tz < current_day_start_local:
-#                 current_day_start_local -= timedelta(days=1)
-#
-#             start_of_current_day_utc = guild_tz.localize(current_day_start_local).astimezone(pytz.utc)
-#             start_time_utc = start_of_current_day_utc
-#             display_range_str = "Today (Start of Day, based on reset time)"
-#
-#     # --- Build Gemini Prompt ---
-#     content_for_gemini_prompt = [
-#         f"Provide a concise summary of the following daily check-ins from Discord users. "
-#         f"Start with an 'Overall Summary' (1-3 bullet points on key themes). "
-#         f"Then, add a section titled 'Individual Contributions'. "
-#         f"For each user, provide a concise summary of their specific check-in, detailing their main activity/update. "
-#         f"[... instructions truncated for brevity ...]\n"
-#         f"Here are the check-ins:\n"
-#     ]
-#
-#     try:
-#         async for message in ctx.channel.history(after=start_time_utc, before=end_time_utc, limit=500):
-#             if not message.author.bot and (message.content or message.attachments):
-#                 cleaned_content = message.content.strip()
-#                 if cleaned_content.lower().startswith(checkin_command_string.lower()):
-#                     actual_checkin_content = cleaned_content[len(checkin_command_string):].strip()
-#
-#                     if not actual_checkin_content and message.attachments:
-#                         has_image_for_gemini = False
-#                         for attachment in message.attachments:
-#                             if 'image' in attachment.content_type:
-#                                 try:
-#                                     image_bytes = await attachment.read()
-#                                     pil_image = Image.open(BytesIO(image_bytes))
-#                                     content_for_gemini_prompt.append(
-#                                         f"\n--- Check-in by {message.author.display_name} ({message.created_at.strftime('%H:%M')}):\n"
-#                                         f"[No text provided in check-in message. Summarize based on image.]"
-#                                     )
-#                                     content_for_gemini_prompt.append(pil_image)
-#                                     has_image_for_gemini = True
-#                                     break
-#                                 except Exception:
-#                                     content_for_gemini_prompt.append(
-#                                         f"[Error loading image for image-only check-in: {attachment.filename}]")
-#                         if not has_image_for_gemini:
-#                             content_for_gemini_prompt.append(
-#                                 f"\n--- Check-in by {message.author.display_name} ({message.created_at.strftime('%H:%M')}):\n"
-#                                 f"[No text or valid image provided in check-in message, skipping.]"
-#                             )
-#                     elif actual_checkin_content:
-#                         content_for_gemini_prompt.append(
-#                             f"\n--- Check-in by {message.author.display_name} ({message.created_at.strftime('%H:%M')}):\n"
-#                             f"{actual_checkin_content}"
-#                         )
-#                         has_image_for_gemini = False
-#                         if message.attachments:
-#                             for attachment in message.attachments:
-#                                 if 'image' in attachment.content_type:
-#                                     try:
-#                                         image_bytes = await attachment.read()
-#                                         pil_image = Image.open(BytesIO(image_bytes))
-#                                         content_for_gemini_prompt.append(pil_image)
-#                                         has_image_for_gemini = True
-#                                         break
-#                                     except Exception:
-#                                         content_for_gemini_prompt.append(
-#                                             f"[Error loading image: {attachment.filename}]")
-#                         if not has_image_for_gemini:
-#                             content_for_gemini_prompt.append("[No image provided with check-in.]")
-#     except discord.errors.Forbidden:
-#         await ctx.send("I don't have permission to read message history in this channel.")
-#         return
-#     except discord.errors.HTTPException as e:
-#         await ctx.send(f"An error occurred while fetching messages: {e}")
-#         return
-#
-#     if len(content_for_gemini_prompt) == 1:
-#         await ctx.send(
-#             f"No check-in messages (text or image) found for **{display_range_str}** in this channel to summarize.")
-#         return
-#
-#     try:
-#         genai.configure(api_key=google_api_key)
-#         model = genai.GenerativeModel('gemini-1.5-flash')
-#         response = model.generate_content(content_for_gemini_prompt)
-#         summary_text = response.text.strip()
-#         if len(summary_text) > MAX_EMBED_FIELD_LENGTH:
-#             summary_text = summary_text[:MAX_EMBED_FIELD_LENGTH - 3] + "..."
-#
-#         embed = discord.Embed(
-#             title=f"Check-in Summary for {display_range_str} in #{ctx.channel.name}",
-#             description=summary_text,
-#             color=discord.Color.purple()
-#         )
-#         embed.set_footer(
-#             text=f"Summary generated by Google Gemini on {datetime.now(pytz.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}")
-#         await ctx.send(embed=embed)
-#     except Exception as e:
-#         await ctx.send(f"An error occurred with the Google Gemini API: {e}")
-#
-#
-#
-# @bot.command()
-# async def topic(ctx, *, topic_query: str):
-#     """
-#     Summarizes check-ins related to a specific topic using Google's Gemini model,
-#     analyzing both text and image content. It filters messages based on the topic.
-#     Example usage:
-#     `c.topic bot development`
-#     `c.topic "new features"`
-#     """
-#     data = await get_channel_data(ctx.guild.id, ctx.channel.id)
-#
-#     guild_settings = await get_guild_settings(ctx.guild.id)
-#     timezone_str = guild_settings.get("timezone", "America/Los_Angeles")
-#     try:
-#         guild_tz = pytz.timezone(timezone_str)
-#     except pytz.exceptions.UnknownTimeZoneError:
-#         guild_tz = pytz.timezone("America/Los_Angeles")
-#
-#     google_api_key = os.getenv("GOOGLE_API_KEY")
-#     if not google_api_key:
-#         await ctx.send("ERROR: GOOGLE_API_KEY environment variable not set. Topic command will not work.")
-#         return
-#
-#     if ctx.guild is None:
-#         await ctx.send("This command can only be used in a server channel.")
-#         return
-#
-#     if not topic_query:
-#         await ctx.send("Please provide a topic to summarize. Example: `c.topic project updates`")
-#         return
-#
-#     await ctx.typing()
-#
-#     # Define the time range for fetching messages.
-#     # We'll fetch from the last_reset_time, or 7 days ago if no last_reset_time.
-#     start_time_utc = data.get("last_reset_time")
-#     if not start_time_utc or not isinstance(start_time_utc, datetime) or not start_time_utc.tzinfo:
-#         start_time_utc = datetime.now(pytz.utc) - timedelta(days=7)  # Default lookback period
-#         print(f"DEBUG: No last_reset_time found for topic command, defaulting to 7 days ago: {start_time_utc}")
-#
-#     end_time_utc = datetime.now(pytz.utc)
-#     checkin_command_string = f"{ctx.prefix}c"
-#
-#     # --- Initial prompt without detailed image instructions ---
-#     initial_gemini_prompt_base = [
-#         f"**Task:** Provide a concise summary of Discord check-ins that are specifically related to the topic: '{topic_query}'. "
-#         f"**Instructions:**\n"
-#         f"1.  **Filter Strictly:** Only include information from check-ins that are directly relevant to '{topic_query}'. Ignore unrelated check-ins. If no check-ins are relevant, state that clearly.\n"
-#         f"2.  **Overall Topic Summary:** Begin with an 'Overall Topic Summary' (1-2 bullet points on the main points related to '{topic_query}' found across all relevant check-ins).\n"
-#         f"3.  **Individual Contributions (Relevant Only):** For *each user* who submitted a relevant check-in, provide a concise summary of their specific contribution to '{topic_query}'.\n"
-#         f"4.  **Image Analysis (Simplified for initial filter):** Briefly mention if an image was present (e.g., 'Image: Present' or 'Image: None provided'). Do not analyze content in detail at this stage, only relevance to the topic.\n"
-#         f"5.  **Format:** Use bullet points for the overall topic summary and distinct, nested bullet points for each user's relevant contribution. Ensure all content relates to '{topic_query}'.\n"
-#         f"\nHere are the check-ins (only use those relevant to '{topic_query}'):\n"
-#     ]
-#     # --- Detailed image analysis instructions (to be added conditionally) ---
-#     detailed_image_instructions = (
-#         f"**Crucial Instructions for Image Analysis (VERY IMPORTANT):**\n"
-#         f"1.  **Bot Development/Testing & Topic:** If a user checks in about **developing, debugging, or testing a Discord bot** related to '{topic_query}', AND provides an image that appears to be a **screenshot of Discord content (such as bot outputs, embeds, summaries, or command results)**, you **must consider this image highly relevant** to their stated activity. Describe what the image shows (e.g., '✅ The image displays the bot's summary output, confirming the user's testing of the summary function related to the topic.') and how it directly relates to their check-in. \n"
-#         f"2.  **Measurements & Values & Topic:** If an image contains **clear numerical measurements or values on instruments like beakers, gauges, scales, or thermometers**, and these values are relevant to the user's check-in text *and the topic* (e.g., 'measured x', 'experiment result', 'tracked progress'), you **must precisely read and state the exact value displayed**. For example, if a beaker is shown, state '✅ The image shows a beaker with approximately [X] mL of liquid.' Pay close attention to scale markings and the liquid's meniscus for accuracy, interpolating between marked values if necessary. \n"
-#         f"3.  **Other Irrelevant Images:** If an image is otherwise irrelevant or a generic photo unrelated to the user's specific text description *or the topic*, explicitly state '❌ Irrelevant (no direct support for topic-related text)'. Avoid describing the irrelevant image content.\n"
-#         f"4.  **No Image:** If no image was provided, explicitly state 'Image: None provided'.\n"
-#         f"5.  **Image Only Check-in & Topic:** If a check-in consists *only* of an image with no text, and the image itself clearly relates to '{topic_query}', summarize the content of the image as the user's check-in. State '✅ [Detailed description of image content as the check-in, clearly related to the topic. This was an image-only check-in.]'. If the image is not clearly related to the topic, ignore this check-in.\n"
-#     )
-#
-#     content_for_gemini_messages = []
-#     has_checkin_messages_to_process = False  # Flag to indicate if any check-in messages were found
-#
-#     try:
-#         async for message in ctx.channel.history(after=start_time_utc, before=end_time_utc, limit=500):
-#             if not message.author.bot and (message.content or message.attachments):
-#                 cleaned_content = message.content.strip()
-#                 if cleaned_content.lower().startswith(checkin_command_string.lower()):
-#                     actual_checkin_content = cleaned_content[len(checkin_command_string):].strip()
-#
-#                     checkin_entry_parts = [
-#                         f"\n--- Check-in by {message.author.display_name} ({message.created_at.strftime('%H:%M')}):\n"
-#                     ]
-#                     if actual_checkin_content:
-#                         checkin_entry_parts.append(actual_checkin_content)
-#                     else:
-#                         checkin_entry_parts.append("[No text provided in check-in message.]")
-#
-#                     found_image_for_checkin = False
-#                     if message.attachments:
-#                         for attachment in message.attachments:
-#                             if 'image' in attachment.content_type:
-#                                 try:
-#                                     image_bytes = await attachment.read()
-#                                     pil_image = Image.open(BytesIO(image_bytes))
-#                                     checkin_entry_parts.append(pil_image)
-#                                     found_image_for_checkin = True
-#                                     print(
-#                                         f"DEBUG: Found and prepared image for {message.author.display_name}'s check-in (topic).")
-#                                     break
-#                                 except Exception as e:
-#                                     checkin_entry_parts.append(f"[Error loading image: {attachment.filename}]")
-#                                     print(
-#                                         f"ERROR: Could not load image for Gemini for {message.author.display_name}'s check-in ({attachment.filename}): {e}")
-#
-#                     if not found_image_for_checkin:
-#                         checkin_entry_parts.append("[No image provided with check-in.]")
-#
-#                     content_for_gemini_messages.extend(checkin_entry_parts)
-#                     has_checkin_messages_to_process = True  # At least one check-in command was found
-#
-#     except discord.errors.Forbidden:
-#         await ctx.send("I don't have permission to read message history in this channel.")
-#         return
-#     except discord.errors.HTTPException as e:
-#         await ctx.send(f"An error occurred while fetching messages: {e}")
-#         return
-#
-#     if not has_checkin_messages_to_process:
-#         await ctx.send(
-#             f"No check-in messages (text or image) found in the last 7 days for summarization in this channel.")
-#         return
-#
-#     # Construct the final prompt based on whether check-in messages were found
-#     final_gemini_prompt_content = []
-#
-#     # Always start with the base prompt.
-#     final_gemini_prompt_content.extend(initial_gemini_prompt_base)
-#
-#     # Conditionally inject detailed image instructions IF check-in messages were found.
-#     if has_checkin_messages_to_process:
-#         # Find the placeholder for simplified image analysis in the base prompt
-#         # and replace it with the detailed instructions.
-#         found_placeholder_for_image_inst = False
-#         for i, item in enumerate(final_gemini_prompt_content):
-#             if isinstance(item, str) and "Image Analysis (Simplified for initial filter):" in item:
-#                 final_gemini_prompt_content[i] = detailed_image_instructions
-#                 found_placeholder_for_image_inst = True
-#                 break
-#         # Fallback in case the exact placeholder string changes in initial_gemini_prompt_base
-#         if not found_placeholder_for_image_inst:
-#             final_gemini_prompt_content.insert(len(initial_gemini_prompt_base) - 1, detailed_image_instructions)
-#
-#     # Add the collected check-in messages (text and images) to the final prompt.
-#     final_gemini_prompt_content.extend(content_for_gemini_messages)
-#
-#     try:
-#         genai.configure(api_key=google_api_key)
-#         model = genai.GenerativeModel('gemini-1.5-flash')
-#
-#         # Function to call Gemini's generate_content in a separate thread
-#         def _call_gemini_generate_content(prompt_content):
-#             return model.generate_content(prompt_content)
-#
-#         # Execute the Gemini API call in a separate thread to prevent blocking the Discord event loop
-#         response = await asyncio.to_thread(_call_gemini_generate_content, final_gemini_prompt_content)
-#
-#         summary_text = response.text.strip()
-#
-#         if len(summary_text) > MAX_EMBED_FIELD_LENGTH:
-#             summary_text = summary_text[:MAX_EMBED_FIELD_LENGTH - 3] + "..."
-#             print(f"WARNING: Gemini topic summary truncated to {MAX_EMBED_FIELD_LENGTH} characters.")
-#
-#         # Check if Gemini indicates no relevant check-ins
-#         if "no check-ins directly related to" in summary_text.lower() or \
-#                 "no relevant check-ins were found" in summary_text.lower() or \
-#                 len(summary_text) < 50:  # Arbitrary length for "too short" to indicate no content
-#             summary_text = f"No check-ins directly related to '{topic_query}' were found or summarized in this channel."
-#
-#         embed = discord.Embed(
-#             title=f"Topic Summary: '{topic_query}' in #{ctx.channel.name}",
-#             description=summary_text,
-#             color=discord.Color.green()
-#         )
-#         embed.set_footer(
-#             text=f"Summary generated by Google Gemini on {datetime.now(pytz.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}")
-#
-#         await ctx.send(embed=embed)
-#         print(
-#             f"INFO: Successfully generated and sent topic summary for channel {ctx.channel.id} on topic '{topic_query}' using Google Gemini (multimodal).")
-#
-#     except Exception as e:
-#         await ctx.send(f"An error occurred with the Google Gemini API while summarizing for topic '{topic_query}': {e}")
-#         print(f"ERROR: Google Gemini API Error (multimodal, topic command): {e}")
+@bot.command()
+async def sum(ctx, *, time_range_str: str = None):
+    """
+    Summarizes the check-ins received for a specific time range: a date (MM-DD),
+    'week' (last 7 days), or 'month' (last 30 days).
+
+    If no time range is provided, it summarizes check-ins since the last daily reset.
+    """
+    data = await get_channel_data(ctx.guild.id, ctx.channel.id)
+    guild_settings = await get_guild_settings(ctx.guild.id)
+    timezone_str = guild_settings.get("timezone", "America/Los_Angeles")
+    reset_hour = guild_settings.get("reset_hour", 0)
+    reset_minute = guild_settings.get("reset_minute", 0)
+
+    try:
+        guild_tz = pytz.timezone(timezone_str)
+    except pytz.exceptions.UnknownTimeZoneError:
+        guild_tz = pytz.timezone("America/Los_Angeles")
+
+    google_api_key = os.getenv("GOOGLE_API_KEY")
+    if not google_api_key:
+        await ctx.send("ERROR: GOOGLE_API_KEY environment variable not set. Summary command will not work.")
+        return
+
+    if ctx.guild is None:
+        await ctx.send("This command can only be used in a server channel.")
+        return
+
+    await ctx.typing()
+
+    start_time_utc = None
+    end_time_utc = datetime.now(pytz.utc)
+    display_range_str = ""
+    checkin_command_string = f"{ctx.prefix}c"
+
+    # --- Time Range Parsing ---
+    if time_range_str:
+        time_range_str = time_range_str.strip()
+
+        if time_range_str.lower() in ["week", "1week", "7d", "7days"]:
+            start_time_utc = end_time_utc - timedelta(days=7)
+            display_range_str = "the last week"
+
+        elif time_range_str.lower() in ["month", "1month", "30d", "30days"]:
+            start_time_utc = end_time_utc - timedelta(days=30)
+            display_range_str = "the last month"
+
+        else:
+            # Try MM-DD or M-D
+            match_mm_dd = re.match(r'^\s*(\d{1,2})-(\d{1,2})\s*$', time_range_str)
+            if match_mm_dd:
+                try:
+                    month = int(match_mm_dd.group(1))
+                    day = int(match_mm_dd.group(2))
+                    year = datetime.now().year
+                    target_date_local = datetime(year, month, day).date()
+                except ValueError:
+                    await ctx.send(f"Invalid date '{time_range_str}'. Please use `MM-DD` with a valid month/day.")
+                    return
+            else:
+                # Fallback to dateutil parser
+                try:
+                    parsed_datetime_naive = parser.parse(time_range_str)
+                    target_date_local = parsed_datetime_naive.date()
+                except Exception:
+                    await ctx.send(
+                        f"Could not understand the time range '{time_range_str}'. Please use a format like `MM-DD`, `week`, or `month`."
+                    )
+                    return
+
+            # Convert to UTC range
+            start_of_target_day_naive = datetime.combine(target_date_local, time.min)
+            end_of_target_day_naive = datetime.combine(target_date_local, time.max)
+
+            start_time_utc = guild_tz.localize(start_of_target_day_naive).astimezone(pytz.utc)
+            end_time_utc = guild_tz.localize(end_of_target_day_naive).astimezone(pytz.utc)
+
+            current_guild_date = datetime.now(guild_tz).date()
+            if target_date_local == current_guild_date:
+                display_range_str = "Today"
+            else:
+                display_range_str = target_date_local.strftime('%Y-%m-%d')
+
+    else:
+        # No time range provided — since last reset
+        last_reset_time_utc = data.get("last_reset_time")
+        if last_reset_time_utc and isinstance(last_reset_time_utc, datetime) and last_reset_time_utc.tzinfo:
+            start_time_utc = last_reset_time_utc
+            display_range_str = "Since Last Reset"
+        else:
+            now_guild_tz = datetime.now(guild_tz)
+            current_day_start_local = now_guild_tz.replace(hour=reset_hour, minute=reset_minute, second=0, microsecond=0)
+            if now_guild_tz < current_day_start_local:
+                current_day_start_local -= timedelta(days=1)
+
+            start_of_current_day_utc = guild_tz.localize(current_day_start_local).astimezone(pytz.utc)
+            start_time_utc = start_of_current_day_utc
+            display_range_str = "Today (Start of Day, based on reset time)"
+
+    # --- Build Gemini Prompt ---
+    content_for_gemini_prompt = [
+        f"Provide a concise summary of the following daily check-ins from Discord users. "
+        f"Start with an 'Overall Summary' (1-3 bullet points on key themes). "
+        f"Then, add a section titled 'Individual Contributions'. "
+        f"For each user, provide a concise summary of their specific check-in, detailing their main activity/update. "
+        f"[... instructions truncated for brevity ...]\n"
+        f"Here are the check-ins:\n"
+    ]
+
+    try:
+        async for message in ctx.channel.history(after=start_time_utc, before=end_time_utc, limit=500):
+            if not message.author.bot and (message.content or message.attachments):
+                cleaned_content = message.content.strip()
+                if cleaned_content.lower().startswith(checkin_command_string.lower()):
+                    actual_checkin_content = cleaned_content[len(checkin_command_string):].strip()
+
+                    if not actual_checkin_content and message.attachments:
+                        has_image_for_gemini = False
+                        for attachment in message.attachments:
+                            if 'image' in attachment.content_type:
+                                try:
+                                    image_bytes = await attachment.read()
+                                    pil_image = Image.open(BytesIO(image_bytes))
+                                    content_for_gemini_prompt.append(
+                                        f"\n--- Check-in by {message.author.display_name} ({message.created_at.strftime('%H:%M')}):\n"
+                                        f"[No text provided in check-in message. Summarize based on image.]"
+                                    )
+                                    content_for_gemini_prompt.append(pil_image)
+                                    has_image_for_gemini = True
+                                    break
+                                except Exception:
+                                    content_for_gemini_prompt.append(
+                                        f"[Error loading image for image-only check-in: {attachment.filename}]")
+                        if not has_image_for_gemini:
+                            content_for_gemini_prompt.append(
+                                f"\n--- Check-in by {message.author.display_name} ({message.created_at.strftime('%H:%M')}):\n"
+                                f"[No text or valid image provided in check-in message, skipping.]"
+                            )
+                    elif actual_checkin_content:
+                        content_for_gemini_prompt.append(
+                            f"\n--- Check-in by {message.author.display_name} ({message.created_at.strftime('%H:%M')}):\n"
+                            f"{actual_checkin_content}"
+                        )
+                        has_image_for_gemini = False
+                        if message.attachments:
+                            for attachment in message.attachments:
+                                if 'image' in attachment.content_type:
+                                    try:
+                                        image_bytes = await attachment.read()
+                                        pil_image = Image.open(BytesIO(image_bytes))
+                                        content_for_gemini_prompt.append(pil_image)
+                                        has_image_for_gemini = True
+                                        break
+                                    except Exception:
+                                        content_for_gemini_prompt.append(
+                                            f"[Error loading image: {attachment.filename}]")
+                        if not has_image_for_gemini:
+                            content_for_gemini_prompt.append("[No image provided with check-in.]")
+    except discord.errors.Forbidden:
+        await ctx.send("I don't have permission to read message history in this channel.")
+        return
+    except discord.errors.HTTPException as e:
+        await ctx.send(f"An error occurred while fetching messages: {e}")
+        return
+
+    if len(content_for_gemini_prompt) == 1:
+        await ctx.send(
+            f"No check-in messages (text or image) found for **{display_range_str}** in this channel to summarize.")
+        return
+
+    try:
+        genai.configure(api_key=google_api_key)
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        response = model.generate_content(content_for_gemini_prompt)
+        summary_text = response.text.strip()
+        if len(summary_text) > MAX_EMBED_FIELD_LENGTH:
+            summary_text = summary_text[:MAX_EMBED_FIELD_LENGTH - 3] + "..."
+
+        embed = discord.Embed(
+            title=f"Check-in Summary for {display_range_str} in #{ctx.channel.name}",
+            description=summary_text,
+            color=discord.Color.purple()
+        )
+        embed.set_footer(
+            text=f"Summary generated by Google Gemini on {datetime.now(pytz.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}")
+        await ctx.send(embed=embed)
+    except Exception as e:
+        await ctx.send(f"An error occurred with the Google Gemini API: {e}")
+
+
+
+@bot.command()
+async def topic(ctx, *, topic_query: str):
+    """
+    Summarizes check-ins related to a specific topic using Google's Gemini model,
+    analyzing both text and image content. It filters messages based on the topic.
+    Example usage:
+    `c.topic bot development`
+    `c.topic "new features"`
+    """
+    data = await get_channel_data(ctx.guild.id, ctx.channel.id)
+
+    guild_settings = await get_guild_settings(ctx.guild.id)
+    timezone_str = guild_settings.get("timezone", "America/Los_Angeles")
+    try:
+        guild_tz = pytz.timezone(timezone_str)
+    except pytz.exceptions.UnknownTimeZoneError:
+        guild_tz = pytz.timezone("America/Los_Angeles")
+
+    google_api_key = os.getenv("GOOGLE_API_KEY")
+    if not google_api_key:
+        await ctx.send("ERROR: GOOGLE_API_KEY environment variable not set. Topic command will not work.")
+        return
+
+    if ctx.guild is None:
+        await ctx.send("This command can only be used in a server channel.")
+        return
+
+    if not topic_query:
+        await ctx.send("Please provide a topic to summarize. Example: `c.topic project updates`")
+        return
+
+    await ctx.typing()
+
+    # Define the time range for fetching messages.
+    # We'll fetch from the last_reset_time, or 7 days ago if no last_reset_time.
+    start_time_utc = data.get("last_reset_time")
+    if not start_time_utc or not isinstance(start_time_utc, datetime) or not start_time_utc.tzinfo:
+        start_time_utc = datetime.now(pytz.utc) - timedelta(days=7)  # Default lookback period
+        print(f"DEBUG: No last_reset_time found for topic command, defaulting to 7 days ago: {start_time_utc}")
+
+    end_time_utc = datetime.now(pytz.utc)
+    checkin_command_string = f"{ctx.prefix}c"
+
+    # --- Initial prompt without detailed image instructions ---
+    initial_gemini_prompt_base = [
+        f"**Task:** Provide a concise summary of Discord check-ins that are specifically related to the topic: '{topic_query}'. "
+        f"**Instructions:**\n"
+        f"1.  **Filter Strictly:** Only include information from check-ins that are directly relevant to '{topic_query}'. Ignore unrelated check-ins. If no check-ins are relevant, state that clearly.\n"
+        f"2.  **Overall Topic Summary:** Begin with an 'Overall Topic Summary' (1-2 bullet points on the main points related to '{topic_query}' found across all relevant check-ins).\n"
+        f"3.  **Individual Contributions (Relevant Only):** For *each user* who submitted a relevant check-in, provide a concise summary of their specific contribution to '{topic_query}'.\n"
+        f"4.  **Image Analysis (Simplified for initial filter):** Briefly mention if an image was present (e.g., 'Image: Present' or 'Image: None provided'). Do not analyze content in detail at this stage, only relevance to the topic.\n"
+        f"5.  **Format:** Use bullet points for the overall topic summary and distinct, nested bullet points for each user's relevant contribution. Ensure all content relates to '{topic_query}'.\n"
+        f"\nHere are the check-ins (only use those relevant to '{topic_query}'):\n"
+    ]
+    # --- Detailed image analysis instructions (to be added conditionally) ---
+    detailed_image_instructions = (
+        f"**Crucial Instructions for Image Analysis (VERY IMPORTANT):**\n"
+        f"1.  **Bot Development/Testing & Topic:** If a user checks in about **developing, debugging, or testing a Discord bot** related to '{topic_query}', AND provides an image that appears to be a **screenshot of Discord content (such as bot outputs, embeds, summaries, or command results)**, you **must consider this image highly relevant** to their stated activity. Describe what the image shows (e.g., '✅ The image displays the bot's summary output, confirming the user's testing of the summary function related to the topic.') and how it directly relates to their check-in. \n"
+        f"2.  **Measurements & Values & Topic:** If an image contains **clear numerical measurements or values on instruments like beakers, gauges, scales, or thermometers**, and these values are relevant to the user's check-in text *and the topic* (e.g., 'measured x', 'experiment result', 'tracked progress'), you **must precisely read and state the exact value displayed**. For example, if a beaker is shown, state '✅ The image shows a beaker with approximately [X] mL of liquid.' Pay close attention to scale markings and the liquid's meniscus for accuracy, interpolating between marked values if necessary. \n"
+        f"3.  **Other Irrelevant Images:** If an image is otherwise irrelevant or a generic photo unrelated to the user's specific text description *or the topic*, explicitly state '❌ Irrelevant (no direct support for topic-related text)'. Avoid describing the irrelevant image content.\n"
+        f"4.  **No Image:** If no image was provided, explicitly state 'Image: None provided'.\n"
+        f"5.  **Image Only Check-in & Topic:** If a check-in consists *only* of an image with no text, and the image itself clearly relates to '{topic_query}', summarize the content of the image as the user's check-in. State '✅ [Detailed description of image content as the check-in, clearly related to the topic. This was an image-only check-in.]'. If the image is not clearly related to the topic, ignore this check-in.\n"
+    )
+
+    content_for_gemini_messages = []
+    has_checkin_messages_to_process = False  # Flag to indicate if any check-in messages were found
+
+    try:
+        async for message in ctx.channel.history(after=start_time_utc, before=end_time_utc, limit=500):
+            if not message.author.bot and (message.content or message.attachments):
+                cleaned_content = message.content.strip()
+                if cleaned_content.lower().startswith(checkin_command_string.lower()):
+                    actual_checkin_content = cleaned_content[len(checkin_command_string):].strip()
+
+                    checkin_entry_parts = [
+                        f"\n--- Check-in by {message.author.display_name} ({message.created_at.strftime('%H:%M')}):\n"
+                    ]
+                    if actual_checkin_content:
+                        checkin_entry_parts.append(actual_checkin_content)
+                    else:
+                        checkin_entry_parts.append("[No text provided in check-in message.]")
+
+                    found_image_for_checkin = False
+                    if message.attachments:
+                        for attachment in message.attachments:
+                            if 'image' in attachment.content_type:
+                                try:
+                                    image_bytes = await attachment.read()
+                                    pil_image = Image.open(BytesIO(image_bytes))
+                                    checkin_entry_parts.append(pil_image)
+                                    found_image_for_checkin = True
+                                    print(
+                                        f"DEBUG: Found and prepared image for {message.author.display_name}'s check-in (topic).")
+                                    break
+                                except Exception as e:
+                                    checkin_entry_parts.append(f"[Error loading image: {attachment.filename}]")
+                                    print(
+                                        f"ERROR: Could not load image for Gemini for {message.author.display_name}'s check-in ({attachment.filename}): {e}")
+
+                    if not found_image_for_checkin:
+                        checkin_entry_parts.append("[No image provided with check-in.]")
+
+                    content_for_gemini_messages.extend(checkin_entry_parts)
+                    has_checkin_messages_to_process = True  # At least one check-in command was found
+
+    except discord.errors.Forbidden:
+        await ctx.send("I don't have permission to read message history in this channel.")
+        return
+    except discord.errors.HTTPException as e:
+        await ctx.send(f"An error occurred while fetching messages: {e}")
+        return
+
+    if not has_checkin_messages_to_process:
+        await ctx.send(
+            f"No check-in messages (text or image) found in the last 7 days for summarization in this channel.")
+        return
+
+    # Construct the final prompt based on whether check-in messages were found
+    final_gemini_prompt_content = []
+
+    # Always start with the base prompt.
+    final_gemini_prompt_content.extend(initial_gemini_prompt_base)
+
+    # Conditionally inject detailed image instructions IF check-in messages were found.
+    if has_checkin_messages_to_process:
+        # Find the placeholder for simplified image analysis in the base prompt
+        # and replace it with the detailed instructions.
+        found_placeholder_for_image_inst = False
+        for i, item in enumerate(final_gemini_prompt_content):
+            if isinstance(item, str) and "Image Analysis (Simplified for initial filter):" in item:
+                final_gemini_prompt_content[i] = detailed_image_instructions
+                found_placeholder_for_image_inst = True
+                break
+        # Fallback in case the exact placeholder string changes in initial_gemini_prompt_base
+        if not found_placeholder_for_image_inst:
+            final_gemini_prompt_content.insert(len(initial_gemini_prompt_base) - 1, detailed_image_instructions)
+
+    # Add the collected check-in messages (text and images) to the final prompt.
+    final_gemini_prompt_content.extend(content_for_gemini_messages)
+
+    try:
+        genai.configure(api_key=google_api_key)
+        model = genai.GenerativeModel('gemini-1.5-flash')
+
+        # Function to call Gemini's generate_content in a separate thread
+        def _call_gemini_generate_content(prompt_content):
+            return model.generate_content(prompt_content)
+
+        # Execute the Gemini API call in a separate thread to prevent blocking the Discord event loop
+        response = await asyncio.to_thread(_call_gemini_generate_content, final_gemini_prompt_content)
+
+        summary_text = response.text.strip()
+
+        if len(summary_text) > MAX_EMBED_FIELD_LENGTH:
+            summary_text = summary_text[:MAX_EMBED_FIELD_LENGTH - 3] + "..."
+            print(f"WARNING: Gemini topic summary truncated to {MAX_EMBED_FIELD_LENGTH} characters.")
+
+        # Check if Gemini indicates no relevant check-ins
+        if "no check-ins directly related to" in summary_text.lower() or \
+                "no relevant check-ins were found" in summary_text.lower() or \
+                len(summary_text) < 50:  # Arbitrary length for "too short" to indicate no content
+            summary_text = f"No check-ins directly related to '{topic_query}' were found or summarized in this channel."
+
+        embed = discord.Embed(
+            title=f"Topic Summary: '{topic_query}' in #{ctx.channel.name}",
+            description=summary_text,
+            color=discord.Color.green()
+        )
+        embed.set_footer(
+            text=f"Summary generated by Google Gemini on {datetime.now(pytz.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}")
+
+        await ctx.send(embed=embed)
+        print(
+            f"INFO: Successfully generated and sent topic summary for channel {ctx.channel.id} on topic '{topic_query}' using Google Gemini (multimodal).")
+
+    except Exception as e:
+        await ctx.send(f"An error occurred with the Google Gemini API while summarizing for topic '{topic_query}': {e}")
+        print(f"ERROR: Google Gemini API Error (multimodal, topic command): {e}")
 
 
 # Existing resetTime task (truncated for brevity, assume it's fully present)
@@ -1768,273 +1768,26 @@ async def resetTime():
                pass
 
 
-# async def _perform_channel_reset(guild_id, channel_id, channel_data, now_guild_tz, formatted_date):
-#     """
-#     Performs the reset for a channel: calculates and posts leaderboards, resets daily check-in lists,
-#     and persists changes to Postgres. Now includes Gemini summary for the period since the last reset,
-#     analyzing both text and image content.
-#     """
-#     print(
-#         f"INFO: Starting reset process for channel {channel_id} in guild {guild_id} at {now_guild_tz.strftime('%Y-%m-%d %H:%M:%S')}.")
-#
-#     google_api_key = os.getenv("GOOGLE_API_KEY")
-#     gemini_summary_text = ""
-#
-#     if not google_api_key:
-#         print(
-#             f"ERROR: GOOGLE_API_KEY environment variable not set. Cannot generate Gemini summary for channel {channel_id}.")
-#         gemini_summary_text = "Automatic summary failed: Google API Key not configured."
-#     else:
-#         genai.configure(api_key=google_api_key)
-#         gemini_model = genai.GenerativeModel('gemini-1.5-flash')
-#
-#     start_time_for_summary_fetch_utc = channel_data.get("last_reset_time")
-#     if not start_time_for_summary_fetch_utc or not isinstance(start_time_for_summary_fetch_utc,
-#                                                               datetime) or not start_time_for_summary_fetch_utc.tzinfo:
-#         guild_settings = await get_guild_settings(guild_id)
-#         timezone_str = guild_settings.get("timezone", "America/Los_Angeles")
-#         try:
-#             guild_tz = pytz.timezone(timezone_str)
-#         except pytz.exceptions.UnknownTimeZoneError:
-#             guild_tz = pytz.timezone("America/Los_Angeles")
-#
-#         start_of_day_guild_tz = now_guild_tz.replace(hour=0, minute=0, second=0, microsecond=0)
-#         start_time_for_summary_fetch_utc = start_of_day_guild_tz.astimezone(pytz.utc)
-#         print(f"DEBUG: Using fallback start time for summary fetch: {start_time_for_summary_fetch_utc}")
-#     else:
-#         print(f"DEBUG: Using last_reset_time for summary fetch: {start_time_for_summary_fetch_utc}")
-#
-#     channel = bot.get_channel(channel_id)
-#     if not channel:
-#         print(
-#             f"WARNING: Channel {channel_id} not found or inaccessible in guild {guild_id}. Cannot send summary or fetch messages.")
-#         gemini_summary_text = "Automatic summary failed: Channel not found or accessible."
-#     else:
-#         # --- MODIFIED PROMPT INSTRUCTION FOR STRUCTURED OUTPUT AND ENHANCED IMAGE RELEVANCE ---
-#         content_for_gemini_prompt = [
-#             f"Provide a concise summary of the following daily check-ins from Discord users. "
-#             f"Start with an 'Overall Summary' (1-3 bullet points on key themes). "
-#             f"Then, add a section titled 'Individual Contributions'. "
-#             f"For each user, provide a concise summary of their specific check-in, detailing their main activity/update from both text and image (if provided). "
-#             f"**Crucial Instruction for Image Relevance & Detail:**\n"
-#             f"1.  **Bot Development/Testing Images:** If a user checks in about **developing, debugging, or testing a Discord bot**, and provides an image that appears to be a **screenshot of Discord content (such as bot outputs, embeds, summaries, or command results)**, you **must consider this image highly relevant** to their stated activity. Describe what the image shows (e.g., 'The image displays the bot's summary output, confirming the user's testing of the summary function.') and how it directly relates to their check-in. "
-#             f"2.  **Measurements & Values:** If an image contains **clear numerical measurements or values on instruments like beakers, gauges, scales, or thermometers**, and these values are relevant to the user's check-in text (e.g., 'measured x', 'experiment result', 'tracked progress'), you **must precisely read and state the exact value displayed**. For example, if a beaker is shown, state 'The image shows a beaker with approximately [X] mL of liquid.' Pay close attention to scale markings and the liquid's meniscus for accuracy, interpolating between marked values if necessary. "
-#             f"3.  **Other Irrelevant Images:** If an image is otherwise irrelevant or a generic photo unrelated to the user's specific text description, explicitly state 'Image: Irrelevant'. "
-#             f"4.  **No Image:** If no image was provided, explicitly state 'Image: None provided'. "
-#             f"Use bullet points for the overall summary and distinct, nested bullet points for each user's contribution. "
-#             f"Example format:\n"
-#             f"**Overall Summary:**\n"
-#             f"- [Overall theme 1]\n"
-#             f"- [Overall theme 2]\n"
-#             f"\n"
-#             f"**Individual Contributions:**\n"
-#             f"- **[User A]**: [Summary of User A's check-in. Image: Relevant description / Irrelevant / None provided.]\n"
-#             f"- **[User B]**: [Summary of User B's check-in. Image: Relevant description / Irrelevant / None provided.]\n"
-#             f"\nHere are the check-ins:\n"
-#         ]
-#         # --- END MODIFIED PROMPT INSTRUCTION ---
-#
-#         checkin_command_string = "c.c"
-#
-#         try:
-#             async for message in channel.history(after=start_time_for_summary_fetch_utc, limit=500):
-#                 if not message.author.bot and (message.content or message.attachments):
-#                     cleaned_content = message.content.strip()
-#                     if cleaned_content.lower().startswith(checkin_command_string.lower()):
-#                         actual_checkin_content = cleaned_content[len(checkin_command_string):].strip()
-#
-#                         if actual_checkin_content or message.attachments:
-#                             content_for_gemini_prompt.append(
-#                                 f"\n--- Check-in by {message.author.display_name} ({message.created_at.strftime('%H:%M')}):\n"
-#                             )
-#                             if actual_checkin_content:
-#                                 content_for_gemini_prompt.append(actual_checkin_content)
-#                             else:
-#                                 content_for_gemini_prompt.append("[No text provided in check-in message.]")
-#
-#                             has_image_for_gemini = False
-#                             if message.attachments:
-#                                 for attachment in message.attachments:
-#                                     if 'image' in attachment.content_type:
-#                                         try:
-#                                             image_bytes = await attachment.read()
-#                                             pil_image = Image.open(BytesIO(image_bytes))
-#                                             content_for_gemini_prompt.append(pil_image)
-#                                             has_image_for_gemini = True
-#                                             print(
-#                                                 f"DEBUG: Found and prepared image for {message.author.display_name}'s check-in for Gemini.")
-#                                             break
-#                                         except Exception as e:
-#                                             content_for_gemini_prompt.append(
-#                                                 f"[Error loading image: {attachment.filename}]")
-#                                             print(
-#                                                 f"ERROR: Could not load image for Gemini for {message.author.display_name}'s check-in ({attachment.filename}): {e}")
-#
-#                             if not has_image_for_gemini:
-#                                 content_for_gemini_prompt.append("[No image provided with check-in.]")
-#
-#             if len(content_for_gemini_prompt) == 1:
-#                 gemini_summary_text = "No check-in messages (text or image) found since last reset for summarization."
-#             elif not google_api_key:
-#                 gemini_summary_text = "Automatic summary skipped: Google API Key not configured."
-#             else:
-#                 try:
-#                     gemini_response = gemini_model.generate_content(content_for_gemini_prompt)
-#                     gemini_summary_text = gemini_response.text.strip()
-#
-#                     if len(gemini_summary_text) > MAX_EMBED_FIELD_LENGTH:
-#                         gemini_summary_text = gemini_summary_text[:MAX_EMBED_FIELD_LENGTH - 3] + "..."
-#                         print(
-#                             f"WARNING: Gemini summary truncated to {MAX_EMBED_FIELD_LENGTH} characters for channel {channel_id}.")
-#
-#                 except Exception as e:
-#                     gemini_summary_text = f"Automatic summary failed (Gemini API Error): {e}"
-#                     print(f"ERROR: Gemini API Error during automatic summary for channel {channel_id}: {e}")
-#
-#         except discord.errors.Forbidden:
-#             gemini_summary_text = "Automatic summary failed: Bot does not have permission to read message history."
-#             print(f"ERROR: Missing permissions to read history in channel {channel_id} of guild {guild_id}.")
-#         except discord.errors.HTTPException as e:
-#             gemini_summary_text = f"Automatic summary failed (Discord API Error): {e}"
-#             print(f"ERROR: Discord API Error fetching messages for summary in channel {channel_id}: {e}")
-#         except Exception as e:
-#             gemini_summary_text = f"Automatic summary failed (Unexpected Error): {e}"
-#             print(f"ERROR: Unexpected error during message fetching for summary in channel {channel_id}: {e}")
-#
-#     # --- Save the current reset time to the channel data ---
-#     channel_data["last_reset_time"] = now_guild_tz.astimezone(pytz.utc)
-#
-#     # --- Prepare list of users who checked in for the day that just ended ---
-#     checked_users_names = []
-#     for user_id in channel_data.get("dailyCheckedUsers", []):
-#         try:
-#             user = await bot.fetch_user(user_id)
-#             real_name = channel_data.get("userToReal", {}).get(str(user_id), user.display_name)
-#             checked_users_names.append(real_name)
-#         except (discord.NotFound, discord.HTTPException):
-#             checked_users_names.append(f"Unknown User ({user_id})")
-#     checked_users_list_str = "\n".join(checked_users_names) if checked_users_names else "No users checked in today."
-#     print(f"DEBUG: Checked users for summary: {checked_users_names}")
-#
-#     # --- Find users who missed check-in for the day that just ended ---
-#     unchecked_user_ids = []
-#     unchecked_users_names = []
-#     guild = bot.get_guild(guild_id)
-#     if guild:
-#         for member in guild.members:
-#             if not member.bot and member.id not in channel_data.get("banned_users",
-#                                                                     set()) and member.id not in channel_data.get(
-#                     "dailyCheckedUsers", []):
-#                 try:
-#                     real_name = channel_data.get("userToReal", {}).get(str(member.id), member.display_name)
-#                 except (discord.NotFound, discord.HTTPException):
-#                     real_name = f"Unknown User ({member.id})"
-#                 unchecked_users_names.append(real_name)
-#                 unchecked_user_ids.append(member.id)
-#     unchecked_list_str = "\n".join(unchecked_users_names) if unchecked_users_names else "Everyone checked in today!"
-#     print(f"DEBUG: Unchecked users for summary: {unchecked_users_names}")
-#
-#     # --- Update missed_users dict (for persistent tracking of consecutive misses) ---
-#     missed_users = channel_data.get("missed_users", {})
-#     for user_id in unchecked_user_ids:
-#         missed_users[user_id] = missed_users.get(user_id, 0) + 1
-#     channel_data["missed_users"] = missed_users
-#     print(f"DEBUG: Updated missed_users in cache: {channel_data['missed_users']}")
-#
-#     # --- Reset daily check-ins for the new day (empty the list) ---
-#     channel_data["dailyCheckedUsers"] = []
-#     print(f"DEBUG: dailyCheckedUsers reset in cache.")
-#
-#     # --- Clean up 'users' data if check-in count is zero ---
-#     # Corrected line for the SyntaxError:
-#     channel_data["users"] = {k: v for k, v in channel_data.get("users", {}).items() if v > 0}
-#     print(f"DEBUG: Cleaned 'users' data in cache.")
-#
-#     # --- Save all updated channel data to the database ---
-#     await save_specific_data_to_db(guild_id, channel_id, channel_data)
-#     print(f"INFO: Channel {channel_id} data saved to DB after reset.")
-#
-#     # --- Prepare check-in leaderboard for the embed ---
-#     checkins_by_real_name = {}
-#     for user_id, checkins in channel_data.get("users", {}).items():
-#         try:
-#             user = await bot.fetch_user(user_id)
-#             real_name = channel_data.get("userToReal", {}).get(str(user_id), user.display_name)
-#         except (discord.NotFound, discord.HTTPException):
-#             real_name = f"Unknown User ({user_id})"
-#         checkins_by_real_name[real_name] = checkins_by_real_name.get(real_name, 0) + checkins
-#     sorted_checkins = sorted(checkins_by_real_name.items(), key=lambda x: x[1], reverse=True)
-#     leaderboard_message = (
-#         "\n".join(
-#             f"{i + 1}. **{real_name}**: {checkins} check-in(s)"
-#             for i, (real_name, checkins) in enumerate(sorted_checkins)
-#         )
-#         if sorted_checkins else "No valid check-ins recorded."
-#     )
-#     print(f"DEBUG: Leaderboard message prepared.")
-#
-#     # --- Prepare missed check-in leaderboard for the embed ---
-#     missed_by_real_name = {}
-#     for user_id, missed in channel_data.get("missed_users", {}).items():
-#         try:
-#             user = await bot.fetch_user(user_id)
-#             real_name = channel_data.get("userToReal", {}).get(str(user_id), user.display_name)
-#         except (discord.NotFound, discord.HTTPException):
-#             real_name = f"Unknown User ({user_id})"
-#         missed_by_real_name[real_name] = missed_by_real_name.get(real_name, 0) + missed
-#     sorted_missed = sorted(missed_by_real_name.items(), key=lambda x: x[1], reverse=True)
-#     missed_leaderboard = (
-#         "\n".join(
-#             f"{i + 1}. **{real_name}**: {missed} missed check-in(s)"
-#             for i, (real_name, missed) in enumerate(sorted_missed)
-#         )
-#         if sorted_missed else "No missed check-ins."
-#     )
-#     print(f"DEBUG: Missed leaderboard message prepared.")
-#
-#     # --- Send the comprehensive summary embed to the channel ---
-#     if channel:
-#         embed = discord.Embed(
-#             title=f"Daily Check-in Summary — {formatted_date}",
-#             description=f"Here is the breakdown of today's check-ins for this channel (<#{channel_id}>):",
-#             color=discord.Color.blue()
-#         )
-#         # Add the AI-generated summary as the first field
-#         embed.add_field(name="AI-Generated Daily Summary (since last reset)", value=gemini_summary_text, inline=False)
-#
-#         # Add the lists of checked-in and unchecked users
-#         embed.add_field(name="Checked-in Users", value=checked_users_list_str, inline=False)
-#         embed.add_field(name="Users Who Didn't Check-in", value=unchecked_list_str, inline=False)
-#
-#         # Add the leaderboards
-#         embed.add_field(name="Check-in Leaderboard", value=leaderboard_message, inline=False)
-#         embed.add_field(name="Missed Check-ins Leaderboard", value=missed_leaderboard, inline=False)
-#
-#         # Add the reset notice
-#         embed.add_field(name="Reset Notice", value="Daily check-in data has been reset for this channel.", inline=False)
-#
-#         try:
-#             await channel.send(embed=embed)
-#             print(f"INFO: Sent reset summary to channel {channel_id} in guild {guild_id}.")
-#         except discord.errors.Forbidden:
-#             print(
-#                 f"ERROR: Missing permissions to send message in channel {channel_id} of guild {guild_id}. Check bot role permissions.")
-#         except discord.errors.HTTPException as e:
-#             print(f"ERROR: Error sending message to channel {channel_id} of guild {guild_id}: {e}")
-#         except Exception as e:
-#             print(
-#                 f"CRITICAL ERROR: Unexpected error while sending reset summary to channel {channel_id} of guild {guild_id}: {e}")
-#     else:
-#         print(f"WARNING: Channel {channel_id} not found or inaccessible in guild {guild_id}. Summary not sent.")
 async def _perform_channel_reset(guild_id, channel_id, channel_data, now_guild_tz, formatted_date):
     """
     Performs the reset for a channel: calculates and posts leaderboards, resets daily check-in lists,
-    and persists changes to Postgres. The Gemini summary feature has been removed.
+    and persists changes to Postgres. Now includes Gemini summary for the period since the last reset,
+    analyzing both text and image content.
     """
     print(
         f"INFO: Starting reset process for channel {channel_id} in guild {guild_id} at {now_guild_tz.strftime('%Y-%m-%d %H:%M:%S')}.")
 
-    # --- Start time for summary fetch (kept for message fetching, but no longer used for Gemini) ---
+    google_api_key = os.getenv("GOOGLE_API_KEY")
+    gemini_summary_text = ""
+
+    if not google_api_key:
+        print(
+            f"ERROR: GOOGLE_API_KEY environment variable not set. Cannot generate Gemini summary for channel {channel_id}.")
+        gemini_summary_text = "Automatic summary failed: Google API Key not configured."
+    else:
+        genai.configure(api_key=google_api_key)
+        gemini_model = genai.GenerativeModel('gemini-1.5-flash')
+
     start_time_for_summary_fetch_utc = channel_data.get("last_reset_time")
     if not start_time_for_summary_fetch_utc or not isinstance(start_time_for_summary_fetch_utc,
                                                               datetime) or not start_time_for_summary_fetch_utc.tzinfo:
@@ -2051,21 +1804,102 @@ async def _perform_channel_reset(guild_id, channel_id, channel_data, now_guild_t
     else:
         print(f"DEBUG: Using last_reset_time for summary fetch: {start_time_for_summary_fetch_utc}")
 
-    # --- The logic below for fetching messages is kept but modified to only gather checked users,
-    #     as it was previously coupled with the Gemini summary logic.
-    #     However, since the core reset logic relies on channel_data["dailyCheckedUsers"],
-    #     which is handled by other parts of the bot on check-in, the message fetching
-    #     loop below is largely redundant for the *reset* process itself
-    #     and can be safely removed, as the lists are built later from channel_data.
-    #     The original code's message fetching was ONLY for the Gemini summary.
-
-    # Find the channel object
     channel = bot.get_channel(channel_id)
     if not channel:
         print(
-            f"WARNING: Channel {channel_id} not found or inaccessible in guild {guild_id}. Cannot send summary.")
+            f"WARNING: Channel {channel_id} not found or inaccessible in guild {guild_id}. Cannot send summary or fetch messages.")
+        gemini_summary_text = "Automatic summary failed: Channel not found or accessible."
+    else:
+        # --- MODIFIED PROMPT INSTRUCTION FOR STRUCTURED OUTPUT AND ENHANCED IMAGE RELEVANCE ---
+        content_for_gemini_prompt = [
+            f"Provide a concise summary of the following daily check-ins from Discord users. "
+            f"Start with an 'Overall Summary' (1-3 bullet points on key themes). "
+            f"Then, add a section titled 'Individual Contributions'. "
+            f"For each user, provide a concise summary of their specific check-in, detailing their main activity/update from both text and image (if provided). "
+            f"**Crucial Instruction for Image Relevance & Detail:**\n"
+            f"1.  **Bot Development/Testing Images:** If a user checks in about **developing, debugging, or testing a Discord bot**, and provides an image that appears to be a **screenshot of Discord content (such as bot outputs, embeds, summaries, or command results)**, you **must consider this image highly relevant** to their stated activity. Describe what the image shows (e.g., 'The image displays the bot's summary output, confirming the user's testing of the summary function.') and how it directly relates to their check-in. "
+            f"2.  **Measurements & Values:** If an image contains **clear numerical measurements or values on instruments like beakers, gauges, scales, or thermometers**, and these values are relevant to the user's check-in text (e.g., 'measured x', 'experiment result', 'tracked progress'), you **must precisely read and state the exact value displayed**. For example, if a beaker is shown, state 'The image shows a beaker with approximately [X] mL of liquid.' Pay close attention to scale markings and the liquid's meniscus for accuracy, interpolating between marked values if necessary. "
+            f"3.  **Other Irrelevant Images:** If an image is otherwise irrelevant or a generic photo unrelated to the user's specific text description, explicitly state 'Image: Irrelevant'. "
+            f"4.  **No Image:** If no image was provided, explicitly state 'Image: None provided'. "
+            f"Use bullet points for the overall summary and distinct, nested bullet points for each user's contribution. "
+            f"Example format:\n"
+            f"**Overall Summary:**\n"
+            f"- [Overall theme 1]\n"
+            f"- [Overall theme 2]\n"
+            f"\n"
+            f"**Individual Contributions:**\n"
+            f"- **[User A]**: [Summary of User A's check-in. Image: Relevant description / Irrelevant / None provided.]\n"
+            f"- **[User B]**: [Summary of User B's check-in. Image: Relevant description / Irrelevant / None provided.]\n"
+            f"\nHere are the check-ins:\n"
+        ]
+        # --- END MODIFIED PROMPT INSTRUCTION ---
 
-    # --- NO GEMINI/AI SUMMARY LOGIC HERE ---
+        checkin_command_string = "c.c"
+
+        try:
+            async for message in channel.history(after=start_time_for_summary_fetch_utc, limit=500):
+                if not message.author.bot and (message.content or message.attachments):
+                    cleaned_content = message.content.strip()
+                    if cleaned_content.lower().startswith(checkin_command_string.lower()):
+                        actual_checkin_content = cleaned_content[len(checkin_command_string):].strip()
+
+                        if actual_checkin_content or message.attachments:
+                            content_for_gemini_prompt.append(
+                                f"\n--- Check-in by {message.author.display_name} ({message.created_at.strftime('%H:%M')}):\n"
+                            )
+                            if actual_checkin_content:
+                                content_for_gemini_prompt.append(actual_checkin_content)
+                            else:
+                                content_for_gemini_prompt.append("[No text provided in check-in message.]")
+
+                            has_image_for_gemini = False
+                            if message.attachments:
+                                for attachment in message.attachments:
+                                    if 'image' in attachment.content_type:
+                                        try:
+                                            image_bytes = await attachment.read()
+                                            pil_image = Image.open(BytesIO(image_bytes))
+                                            content_for_gemini_prompt.append(pil_image)
+                                            has_image_for_gemini = True
+                                            print(
+                                                f"DEBUG: Found and prepared image for {message.author.display_name}'s check-in for Gemini.")
+                                            break
+                                        except Exception as e:
+                                            content_for_gemini_prompt.append(
+                                                f"[Error loading image: {attachment.filename}]")
+                                            print(
+                                                f"ERROR: Could not load image for Gemini for {message.author.display_name}'s check-in ({attachment.filename}): {e}")
+
+                            if not has_image_for_gemini:
+                                content_for_gemini_prompt.append("[No image provided with check-in.]")
+
+            if len(content_for_gemini_prompt) == 1:
+                gemini_summary_text = "No check-in messages (text or image) found since last reset for summarization."
+            elif not google_api_key:
+                gemini_summary_text = "Automatic summary skipped: Google API Key not configured."
+            else:
+                try:
+                    gemini_response = gemini_model.generate_content(content_for_gemini_prompt)
+                    gemini_summary_text = gemini_response.text.strip()
+
+                    if len(gemini_summary_text) > MAX_EMBED_FIELD_LENGTH:
+                        gemini_summary_text = gemini_summary_text[:MAX_EMBED_FIELD_LENGTH - 3] + "..."
+                        print(
+                            f"WARNING: Gemini summary truncated to {MAX_EMBED_FIELD_LENGTH} characters for channel {channel_id}.")
+
+                except Exception as e:
+                    gemini_summary_text = f"Automatic summary failed (Gemini API Error): {e}"
+                    print(f"ERROR: Gemini API Error during automatic summary for channel {channel_id}: {e}")
+
+        except discord.errors.Forbidden:
+            gemini_summary_text = "Automatic summary failed: Bot does not have permission to read message history."
+            print(f"ERROR: Missing permissions to read history in channel {channel_id} of guild {guild_id}.")
+        except discord.errors.HTTPException as e:
+            gemini_summary_text = f"Automatic summary failed (Discord API Error): {e}"
+            print(f"ERROR: Discord API Error fetching messages for summary in channel {channel_id}: {e}")
+        except Exception as e:
+            gemini_summary_text = f"Automatic summary failed (Unexpected Error): {e}"
+            print(f"ERROR: Unexpected error during message fetching for summary in channel {channel_id}: {e}")
 
     # --- Save the current reset time to the channel data ---
     channel_data["last_reset_time"] = now_guild_tz.astimezone(pytz.utc)
@@ -2090,7 +1924,7 @@ async def _perform_channel_reset(guild_id, channel_id, channel_data, now_guild_t
         for member in guild.members:
             if not member.bot and member.id not in channel_data.get("banned_users",
                                                                     set()) and member.id not in channel_data.get(
-                "dailyCheckedUsers", []):
+                    "dailyCheckedUsers", []):
                 try:
                     real_name = channel_data.get("userToReal", {}).get(str(member.id), member.display_name)
                 except (discord.NotFound, discord.HTTPException):
@@ -2165,7 +1999,8 @@ async def _perform_channel_reset(guild_id, channel_id, channel_data, now_guild_t
             description=f"Here is the breakdown of today's check-ins for this channel (<#{channel_id}>):",
             color=discord.Color.blue()
         )
-        # The AI-generated summary field has been removed.
+        # Add the AI-generated summary as the first field
+        embed.add_field(name="AI-Generated Daily Summary (since last reset)", value=gemini_summary_text, inline=False)
 
         # Add the lists of checked-in and unchecked users
         embed.add_field(name="Checked-in Users", value=checked_users_list_str, inline=False)
@@ -2181,48 +2016,6 @@ async def _perform_channel_reset(guild_id, channel_id, channel_data, now_guild_t
         try:
             await channel.send(embed=embed)
             print(f"INFO: Sent reset summary to channel {channel_id} in guild {guild_id}.")
-
-            # --- NEW: Send overflow text in additional messages if needed ---
-            MAX_DISCORD_MSG_LEN = 2000
-
-            def split_if_needed(label, text):
-                """Splits long text into chunks under Discord's 2000-char limit."""
-                if len(text) <= MAX_DISCORD_MSG_LEN:
-                    return [f"**{label}:**\n{text}"]
-                # break into safe chunks
-                chunks = []
-                current = f"**{label}:**\n"
-                for line in text.split("\n"):
-                    if len(current) + len(line) + 1 <= MAX_DISCORD_MSG_LEN:
-                        current += line + "\n"
-                    else:
-                        chunks.append(current)
-                        current = line + "\n"
-                if current:
-                    chunks.append(current)
-                return chunks
-
-            # Checked-in overflow
-            checked_chunks = split_if_needed("Checked-in Users (continued)", checked_users_list_str)
-
-            # Unchecked overflow
-            unchecked_chunks = split_if_needed("Users Who Didn't Check-in (continued)", unchecked_list_str)
-
-            # Leaderboard overflow
-            leaderboard_chunks = split_if_needed("Check-in Leaderboard (continued)", leaderboard_message)
-
-            # Missed leaderboard overflow
-            missed_chunks = split_if_needed("Missed Check-ins Leaderboard (continued)", missed_leaderboard)
-
-            # Send only the *overflow* (if any)
-            for chunk_list in [checked_chunks, unchecked_chunks, leaderboard_chunks, missed_chunks]:
-                if len(chunk_list) > 1:  # means it overflowed
-                    for chunk in chunk_list[1:]:
-                        try:
-                            await channel.send(chunk)
-                        except Exception as e:
-                            print(f"ERROR: Failed sending overflow chunk: {e}")
-
         except discord.errors.Forbidden:
             print(
                 f"ERROR: Missing permissions to send message in channel {channel_id} of guild {guild_id}. Check bot role permissions.")
@@ -2233,6 +2026,7 @@ async def _perform_channel_reset(guild_id, channel_id, channel_data, now_guild_t
                 f"CRITICAL ERROR: Unexpected error while sending reset summary to channel {channel_id} of guild {guild_id}: {e}")
     else:
         print(f"WARNING: Channel {channel_id} not found or inaccessible in guild {guild_id}. Summary not sent.")
+
 
 @bot.event
 async def on_ready():
