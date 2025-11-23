@@ -1,1 +1,10 @@
+# Environment variables and sensitive data
 .env
+
+# Database files
+*.db
+
+# Python-specific ignores
+__pycache__/
+*.pyc
+.venv/
