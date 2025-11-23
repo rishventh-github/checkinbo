@@ -972,6 +972,53 @@ async def a(ctx, user_mention_or_id: str, count: int):
    await save_specific_data_to_db(ctx.guild.id, ctx.channel.id, data)  # Save changes
    print(f"INFO: {count} check-ins {action_text} {member.display_name} ({user_id}) in channel {ctx.channel.id}.")
 
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def z(ctx, number: int = None):
+    """
+    c.z <number>
+    Removes the lowest <number> users from the missed check-in leaderboard.
+    Works identically to c.a, but applies to missed_users instead of users.
+    """
+    guild_id = ctx.guild.id
+    channel_id = ctx.channel.id
+
+    if number is None or number <= 0:
+        await ctx.send("❌ Please provide a **positive number** of entries to remove. Example: `c.z 3`")
+        return
+
+    channel_data = await get_channel_data(guild_id, channel_id)
+    missed_users = channel_data.get("missed_users", {})
+
+    if not missed_users:
+        await ctx.send("ℹ️ The **missed check-in leaderboard is currently empty**.")
+        return
+
+    # Sort users by missed count (ascending, so lowest will be removed first)
+    sorted_entries = sorted(missed_users.items(), key=lambda x: x[1])
+
+    # Determine how many we can remove (cannot exceed list size)
+    number_to_remove = min(number, len(sorted_entries))
+
+    removed_entries = sorted_entries[:number_to_remove]
+
+    # Delete the selected entries from the dictionary
+    for user_id, _ in removed_entries:
+        missed_users.pop(user_id, None)
+
+    # Save updated data
+    channel_data["missed_users"] = missed_users
+    await save_specific_data_to_db(guild_id, channel_id, channel_data)
+
+    # Prepare response message
+    removed_list_text = "\n".join(
+        f"- <@{user_id}> (removed from missed leaderboard)"
+        for user_id, _ in removed_entries
+    )
+
+    await ctx.send(
+        f"✅ **Removed {number_to_remove} entries from the Missed Check-in Leaderboard:**\n{removed_list_text}"
+    )
 
 
 
@@ -1167,7 +1214,7 @@ async def r(ctx, resetTime: str):
        await ctx.send(f"{ctx.author.mention}, this command is only accessible to admins.")
        return
    if len(resetTime) != 6 or not resetTime.isdigit():
-       await ctx.send(f"{ctx.author.mention}, please enter a 6-digit number (e.g., 235959 for 11:59:59 PM). brochacho!!")
+       await ctx.send(f"{ctx.author.mention}, please enter a 6-digit number (e.g., 235959 for 11:59:59 PM).")
        return
 
 
