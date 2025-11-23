@@ -973,53 +973,93 @@ async def a(ctx, user_mention_or_id: str, count: int):
    await save_specific_data_to_db(ctx.guild.id, ctx.channel.id, data)  # Save changes
    print(f"INFO: {count} check-ins {action_text} {member.display_name} ({user_id}) in channel {ctx.channel.id}.")
 
-@bot.command()
-@commands.has_permissions(administrator=True)
-async def z(ctx, number: int = None):
+@bot.command(name="z")
+async def z(ctx, user_mention_or_id: str, count: str):
     """
-    c.z <number>
-    Removes the lowest <number> users from the missed check-in leaderboard.
-    Works identically to c.a, but applies to missed_users instead of users.
+    c.z <user_mention_or_id> <count>
+    Adds (positive) or removes (negative) missed check-ins for a user on the missed leaderboard.
+    Works similarly to c.a but applies to channel_data['missed_users'].
     """
-    guild_id = ctx.guild.id
-    channel_id = ctx.channel.id
-
-    if number is None or number <= 0:
-        await ctx.send("❌ Please provide a **positive number** of entries to remove. Example: `c.z 3`")
+    # Permission check (same as c.a)
+    if not await is_admin(ctx):
+        await ctx.send(f"{ctx.author.mention}, this command is only accessible to admins.")
         return
 
-    channel_data = await get_channel_data(guild_id, channel_id)
-    missed_users = channel_data.get("missed_users", {})
-
-    if not missed_users:
-        await ctx.send("ℹ️ The **missed check-in leaderboard is currently empty**.")
+    # Resolve and validate count (manual conversion to avoid discord converter raising BadArgument)
+    try:
+        count_int = int(count)
+    except ValueError:
+        await ctx.send(f"{ctx.author.mention}, please provide a valid integer for the count (e.g. `c.z @User 2` or `c.z 123456789  -1`).")
         return
 
-    # Sort users by missed count (ascending, so lowest will be removed first)
-    sorted_entries = sorted(missed_users.items(), key=lambda x: x[1])
+    # Resolve the member / user id
+    member = None
+    user_id = None
 
-    # Determine how many we can remove (cannot exceed list size)
-    number_to_remove = min(number, len(sorted_entries))
+    # Try mention format
+    if user_mention_or_id.startswith('<@') and user_mention_or_id.endswith('>'):
+        try:
+            user_id = int(user_mention_or_id.strip('<@!>'))
+            member = ctx.guild.get_member(user_id)
+        except ValueError:
+            pass
+    # Try plain ID
+    elif user_mention_or_id.isdigit():
+        user_id = int(user_mention_or_id)
+        member = ctx.guild.get_member(user_id)
+    else:
+        # Fallback to searching by exact display name (less reliable, matches c.a)
+        member = discord.utils.get(ctx.guild.members, name=user_mention_or_id)
+        if member:
+            user_id = member.id
 
-    removed_entries = sorted_entries[:number_to_remove]
+    if not user_id:
+        await ctx.send(f"User '{user_mention_or_id}' not found in this server. Please use a mention or user ID.")
+        return
 
-    # Delete the selected entries from the dictionary
-    for user_id, _ in removed_entries:
-        missed_users.pop(user_id, None)
+    # Load channel data
+    channel_data = await get_channel_data(ctx.guild.id, ctx.channel.id)
+    missed = channel_data.get("missed_users", {})
 
-    # Save updated data
-    channel_data["missed_users"] = missed_users
-    await save_specific_data_to_db(guild_id, channel_id, channel_data)
+    # Update missed count
+    current = missed.get(user_id, 0)
+    new_count = current + count_int
 
-    # Prepare response message
-    removed_list_text = "\n".join(
-        f"- <@{user_id}> (removed from missed leaderboard)"
-        for user_id, _ in removed_entries
-    )
+    # Prevent negative counts
+    if new_count <= 0:
+        # Remove entry if it exists and becomes zero or negative
+        if user_id in missed:
+            missed.pop(user_id, None)
+            action_text = "removed from"
+        else:
+            # nothing to remove; set to zero effectively
+            action_text = "no change (was already zero)"
+            new_count = 0
+    else:
+        missed[user_id] = new_count
+        action_text = "updated"
 
-    await ctx.send(
-        f"✅ **Removed {number_to_remove} entries from the Missed Check-in Leaderboard:**\n{removed_list_text}"
-    )
+    channel_data["missed_users"] = missed
+    await save_specific_data_to_db(ctx.guild.id, ctx.channel.id, channel_data)  # Persist change
+
+    # Prepare display name for message
+    try:
+        user_obj = await bot.fetch_user(user_id)
+        display_name = channel_data.get("userToReal", {}).get(str(user_id), user_obj.display_name)
+    except (discord.NotFound, discord.HTTPException):
+        display_name = f"Unknown User ({user_id})"
+
+    # Confirmation
+    if action_text == "updated":
+        await ctx.send(f"✅ Missed check-ins for **{display_name}** have been set to **{new_count}** (change: {count_int:+}).")
+        print(f"INFO: Missed check-ins for {display_name} ({user_id}) changed by {count_int} in channel {ctx.channel.id}. New total: {new_count}")
+    elif action_text == "removed":
+        await ctx.send(f"✅ **{display_name}** has been removed from the missed-checkin leaderboard (was {current}).")
+        print(f"INFO: Removed {display_name} ({user_id}) from missed leaderboard in channel {ctx.channel.id}.")
+    else:
+        await ctx.send(f"ℹ️ No change was made for **{display_name}**; missed-checkin count remains at 0.")
+        print(f"INFO: No change for {display_name} ({user_id}) in missed leaderboard (already 0).")
+
 
 
 
