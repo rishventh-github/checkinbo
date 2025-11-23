@@ -521,6 +521,7 @@ async def m(ctx):
                   "\n\n**Commands only accessible by server admins**:"
                   "\n`c.n` - Tracks certain users/changes usernames to their real names (channel-specific)"
                   "\n`c.a` - Adds/removes a certain number of check-ins to a user's check-in count (negative number to remove check-ins) (channel-specific)"
+                  "\n`c.z` - Adds/removes a certain number of missed check-ins to a user's missed check-in count (negative number to remove missed check-ins) (channel-specific)"
                   "\n`c.r` - Sets the reset time for check-ins for this channel"
                   "\n`c.e` - Requires evidence for check-ins (channel-specific)"
                   "\n`c.d` - Manages banned users (ban, unban, list) (channel-specific)"
