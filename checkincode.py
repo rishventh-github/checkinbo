@@ -702,6 +702,10 @@ async def c(ctx, *checkIn):
    await save_specific_data_to_db(ctx.guild.id, ctx.channel.id, data)  # Persist immediately!
    print(f"INFO: User {user_id} checked in to channel {ctx.channel.id} in guild {ctx.guild.id}.")
 
+   now_guild_tz = datetime.now(pytz.timezone(guild_timezone))
+   channel_data.setdefault("last_checkins", {})
+   channel_data["last_checkins"][str(user.id)] = now_guild_tz.astimezone(pytz.utc)
+
 
    await ctx.send(f"{ctx.author.mention}, you've successfully checked in today in this channel!")
 
@@ -793,6 +797,74 @@ async def ll(ctx):
        )
    await ctx.send(embed=embed)
 
+
+@bot.command(name="dl")
+async def days_since_last(ctx):
+    """
+    c.dl
+    Shows a leaderboard ranking users by how many days it has been
+    since they last posted a check-in.
+    Does NOT appear in the daily reset summary.
+    """
+    guild_id = ctx.guild.id
+    channel_id = ctx.channel.id
+
+    # Load channel data
+    channel_data = await get_channel_data(guild_id, channel_id)
+    last_checkins = channel_data.get("last_checkins", {})
+
+    # Get guild timezone
+    guild_settings = await get_guild_settings(guild_id)
+    timezone_str = guild_settings.get("timezone", "America/Los_Angeles")
+    try:
+        guild_tz = pytz.timezone(timezone_str)
+    except pytz.exceptions.UnknownTimeZoneError:
+        guild_tz = pytz.timezone("America/Los_Angeles")
+
+    now = datetime.now(guild_tz)
+
+    days_since = {}
+
+    for member in ctx.guild.members:
+        if member.bot:
+            continue
+
+        uid = str(member.id)
+
+        if uid in last_checkins:
+            # stored in UTC → convert to guild timezone
+            last_time = last_checkins[uid].astimezone(guild_tz)
+            diff_days = (now.date() - last_time.date()).days
+        else:
+            # never checked in
+            diff_days = "Never"
+
+        days_since[member] = diff_days
+
+    # Sort leaderboard: "Never" appears last
+    sorted_list = sorted(
+        days_since.items(),
+        key=lambda x: (999999 if x[1] == "Never" else x[1]),
+        reverse=True
+    )
+
+    # Format leaderboard output
+    leaderboard_lines = []
+    for i, (member, days) in enumerate(sorted_list, start=1):
+        real_name = channel_data.get("userToReal", {}).get(str(member.id), member.display_name)
+        days_str = f"{days} day(s)" if isinstance(days, int) else "Never checked in"
+        leaderboard_lines.append(f"{i}. **{real_name}** — {days_str}")
+
+    leaderboard_text = "\n".join(leaderboard_lines) if leaderboard_lines else "No users found."
+
+    embed = discord.Embed(
+        title="Days Since Last Check-in Leaderboard",
+        description="Rankings by how long it has been since each user last checked in.",
+        color=discord.Color.gold()
+    )
+    embed.add_field(name="Leaderboard", value=leaderboard_text, inline=False)
+
+    await ctx.send(embed=embed)
 
 
 
@@ -1051,13 +1123,13 @@ async def z(ctx, user_mention_or_id: str, count: str):
 
     # Confirmation
     if action_text == "updated":
-        await ctx.send(f"✅ Missed check-ins for **{display_name}** have been set to **{new_count}** (change: {count_int:+}).")
+        await ctx.send(f"Missed check-ins for **{display_name}** have been set to **{new_count}** (change: {count_int:+}).")
         print(f"INFO: Missed check-ins for {display_name} ({user_id}) changed by {count_int} in channel {ctx.channel.id}. New total: {new_count}")
     elif action_text == "removed":
-        await ctx.send(f"✅ **{display_name}** has been removed from the missed-checkin leaderboard (was {current}).")
+        await ctx.send(f"**{display_name}** has been removed from the missed-checkin leaderboard (was {current}).")
         print(f"INFO: Removed {display_name} ({user_id}) from missed leaderboard in channel {ctx.channel.id}.")
     else:
-        await ctx.send(f"ℹ️ No change was made for **{display_name}**; missed-checkin count remains at 0.")
+        await ctx.send(f"No change was made for **{display_name}**; missed-checkin count remains at 0.")
         print(f"INFO: No change for {display_name} ({user_id}) in missed leaderboard (already 0).")
 
 
