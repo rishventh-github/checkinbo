@@ -646,68 +646,79 @@ async def g(ctx, action: str = None, member: discord.Member = None): # Make acti
 
 @bot.command()
 async def c(ctx, *checkIn):
-   """Check-in command for users. Handles check-ins and saves to Postgres immediately."""
-   data = await get_channel_data(ctx.guild.id, ctx.channel.id)
-   guild_id = ctx.guild.id
-   channel_id = ctx.channel.id
-   user_id = ctx.author.id
+    """Check-in command for users. Handles check-ins and saves to Postgres immediately."""
+    data = await get_channel_data(ctx.guild.id, ctx.channel.id)
+    guild_id = ctx.guild.id
+    channel_id = ctx.channel.id
+    user_id = ctx.author.id
 
+    # -----------------------------
+    # 1. FETCH GUILD TIMEZONE HERE
+    # -----------------------------
+    timezone_result = await bot.pool.fetchrow(
+        "SELECT timezone FROM guild_timezones WHERE guild_id = $1",
+        guild_id
+    )
 
-   # If banned
-   if user_id in data.get("banned_users", set()):
-       await ctx.send(f"{ctx.author.mention}, you are banned from checking in.")
-       return
+    if timezone_result is None:
+        guild_timezone = "UTC"
+    else:
+        guild_timezone = timezone_result["timezone"]
 
+    # If banned
+    if user_id in data.get("banned_users", set()):
+        await ctx.send(f"{ctx.author.mention}, you are banned from checking in.")
+        return
 
-   # Ensure 'dailyCheckedUsers' is a list and 'users' is a dict, defensively
-   if not isinstance(data.get("dailyCheckedUsers"), list):
-       data["dailyCheckedUsers"] = []
-   if not isinstance(data.get("users"), dict):
-       data["users"] = {}
+    # Ensure 'dailyCheckedUsers' is a list and 'users' is a dict, defensively
+    if not isinstance(data.get("dailyCheckedUsers"), list):
+        data["dailyCheckedUsers"] = []
+    if not isinstance(data.get("users"), dict):
+        data["users"] = {}
 
+    # If already checked in today
+    if user_id in data["dailyCheckedUsers"]:
+        await ctx.send(f"{ctx.author.mention}, you've already checked in today in this channel!")
+        return
 
-   # If already checked in today
-   if user_id in data["dailyCheckedUsers"]: # Now safe to access directly
-       await ctx.send(f"{ctx.author.mention}, you've already checked in today in this channel!")
-       return
+    # If require_media is set, check for attachments or links
+    if data.get("require_media", False):
+        has_attachment = bool(ctx.message.attachments)
+        has_link = "http://" in ctx.message.content or "https://" in ctx.message.content
 
+        if not (has_attachment or has_link):
+            await ctx.send(f"{ctx.author.mention}, you must attach an image/file or include a link in your check-in.")
+            return
 
-   # If require_media is set, check for attachments or links
-   if data.get("require_media", False):
-       has_attachment = bool(ctx.message.attachments)
-       # Check for presence of common URL schemes in message content
-       has_link = "http://" in ctx.message.content or "https://" in ctx.message.content
+    # Minimum word count
+    word_min = data.get("word_min", 1)
+    if word_min > 1:
+        checkInText = " ".join(checkIn)
+        if len(checkInText.split()) < word_min:
+            await ctx.send(f"{ctx.author.mention}, your check-in must be at least {word_min} words.")
+            return
 
+    # Add user to today's check-ins and increment total
+    data["dailyCheckedUsers"].append(user_id)
+    data["users"][user_id] = data["users"].get(user_id, 0) + 1
 
-       if not (has_attachment or has_link):
-           await ctx.send(f"{ctx.author.mention}, you must attach an image/file or include a link in your check-in.")
-           return
+    # Save immediately
+    await save_specific_data_to_db(guild_id, channel_id, data)
+    print(f"INFO: User {user_id} checked in to channel {channel_id} in guild {guild_id}.")
 
+    # -----------------------------
+    # 2. NOW SAFE TO USE TIMEZONE
+    # -----------------------------
+    now_guild_tz = datetime.now(pytz.timezone(guild_timezone))
 
-   # Minimum word count
-   word_min = data.get("word_min", 1)
-   if word_min > 1:
-       checkInText = " ".join(checkIn)
-       if len(checkInText.split()) < word_min:
-           await ctx.send(f"{ctx.author.mention}, your check-in must be at least {word_min} words.")
-           return
+    # Track last check-in timestamps
+    data.setdefault("last_checkins", {})
+    data["last_checkins"][str(user_id)] = now_guild_tz.astimezone(pytz.utc)
 
+    # Save again to update last_checkins
+    await save_specific_data_to_db(guild_id, channel_id, data)
 
-   # Add user to today's check-ins and increment total
-   data["dailyCheckedUsers"].append(user_id)
-   data["users"][user_id] = data["users"].get(user_id, 0) + 1
-
-
-   await save_specific_data_to_db(ctx.guild.id, ctx.channel.id, data)  # Persist immediately!
-   print(f"INFO: User {user_id} checked in to channel {ctx.channel.id} in guild {ctx.guild.id}.")
-
-   now_guild_tz = datetime.now(pytz.timezone(guild_timezone))
-   channel_data.setdefault("last_checkins", {})
-   channel_data["last_checkins"][str(user.id)] = now_guild_tz.astimezone(pytz.utc)
-
-
-   await ctx.send(f"{ctx.author.mention}, you've successfully checked in today in this channel!")
-
+    await ctx.send(f"{ctx.author.mention}, you've successfully checked in today in this channel!")
 
 
 
