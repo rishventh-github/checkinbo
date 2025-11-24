@@ -528,8 +528,7 @@ async def m(ctx):
                   "\n`c.g` - Manages server admins (guild-wide)"
                   "\n`c.tz` - Lists all timezones available (guild-wide)"
                   "\n`c.w` - Sets a minimum number of words required in the check-in (channel-specific)"
-                  "\n`c.lr` - Reset the leaderboard, type in 'wl' or 'll' to choose which leaderboard to reset (channel-specific)"
-                  "\n`c.sum` - Gives a summary of the check-ins for the day (you can specify date with MM-DD format), week, or month, and if the evidence was relevant or not")
+                  "\n`c.lr` - Reset the leaderboard, type in 'wl' or 'll' to choose which leaderboard to reset (channel-specific)")
 
 
 
@@ -798,8 +797,8 @@ async def ll(ctx):
    await ctx.send(embed=embed)
 
 
-@bot.command(name="dl")
-async def days_since_last(ctx):
+@bot.command()
+async def dl(ctx):
     """
     c.dl
     Shows a leaderboard ranking users by how many days it has been
