@@ -808,7 +808,8 @@ async def dl(ctx):
     """Leaderboard for # of days since last check-in."""
 
     channel_id = str(ctx.channel.id)
-    data = await get_channel_data(channel_id)
+    data = await get_channel_data(ctx.guild.id, ctx.channel.id)
+
 
     last_checkins = data.get("last_checkins", {})
     reset_time_str = data.get("reset_time", "00:00")
