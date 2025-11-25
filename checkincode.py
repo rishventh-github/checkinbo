@@ -805,89 +805,97 @@ async def ll(ctx):
 
 @bot.command()
 async def dl(ctx):
-    """Shows leaderboard of days since last check-in, with gold leaderboard formatting."""
-    data = await get_channel_data(ctx.guild.id, ctx.channel.id)
+    """Leaderboard showing how many days have passed since each user last checked in."""
 
-    # Ensure last_checkins exists
+    guild_id = str(ctx.guild.id)
+    channel_id = str(ctx.channel.id)
+
+    # Fetch channel data
+    data = await get_channel_data(ctx.guild.id, ctx.channel.id)
+    if data is None:
+        await ctx.send("⚠️ This channel is not configured. Please run `c.cr` first.")
+        return
+
+    reset_hour = data.get("reset_hour", 0)
+    reset_minute = data.get("reset_minute", 0)
+    timezone_str = data.get("timezone", "UTC")
     last_checkins = data.get("last_checkins", {})
 
-    # Parse reset time safely
-    def parse_reset_time(value):
-        if not isinstance(value, str):
-            return 0, 0
-        parts = value.split(":")
-        if len(parts) != 2:
-            return 0, 0
-        try:
-            return int(parts[0]), int(parts[1])
-        except:
-            return 0, 0
-
-    reset_hour, reset_minute = parse_reset_time(data.get("reset_time", "00:00"))
-
-    # Get guild timezone
-    timezone_str = data.get("timezone", "America/Los_Angeles")
+    # Load timezone
     try:
         guild_tz = pytz.timezone(timezone_str)
     except:
-        guild_tz = pytz.timezone("America/Los_Angeles")
+        guild_tz = pytz.UTC
 
-    # Determine the last reset moment
+    # Compute today's reset time in that timezone
     now = datetime.now(guild_tz)
-    today_reset = now.replace(hour=reset_hour, minute=reset_minute, second=0, microsecond=0)
-    if now < today_reset:
-        last_reset = today_reset - timedelta(days=1)
-    else:
-        last_reset = today_reset
+    last_reset = now.replace(hour=reset_hour, minute=reset_minute, second=0, microsecond=0)
+    if now < last_reset:
+        last_reset -= timedelta(days=1)
 
     leaderboard_entries = []
 
-    # Build leaderboard
     for member in ctx.guild.members:
         if member.bot:
             continue
 
         user_id = str(member.id)
+
+        # Never checked in
         if user_id not in last_checkins:
             leaderboard_entries.append((member.display_name, None))
             continue
 
         last_checkin_utc = last_checkins[user_id]
+
+        # Convert string → datetime if needed
+        if isinstance(last_checkin_utc, str):
+            try:
+                last_checkin_utc = datetime.fromisoformat(last_checkin_utc)
+            except:
+                leaderboard_entries.append((member.display_name, None))
+                continue
+
+        # Ensure timezone-aware
+        if last_checkin_utc.tzinfo is None:
+            last_checkin_utc = last_checkin_utc.replace(tzinfo=pytz.UTC)
+
+        # Convert to guild timezone
         last_checkin_local = last_checkin_utc.astimezone(guild_tz)
 
+        # If the user checked in after the last reset → 0 days
         if last_checkin_local > last_reset:
             days = 0
         else:
-            deltas = now - last_checkin_local
-            days = deltas.days
+            days = (now - last_checkin_local).days
 
         leaderboard_entries.append((member.display_name, days))
 
-    # Sort: longest since check-in first
-    leaderboard_entries.sort(key=lambda x: (x[1] is None, x[1] if x[1] is not None else 99999), reverse=True)
+    # Sorting: None (never checked in) goes first, then highest number
+    leaderboard_entries.sort(key=lambda x: (x[1] is not None, -(x[1] or 0)))
 
     # Format leaderboard text
-    leaderboard_text = ""
-    for i, (name, days) in enumerate(leaderboard_entries, start=1):
+    lb_text = ""
+    rank = 1
+
+    for name, days in leaderboard_entries:
         if days is None:
-            leaderboard_text += f"**{i}. {name}** — Never checked in\n"
+            lb_text += f"**{rank}. {name} —** *Never checked in*\n"
         else:
-            leaderboard_text += f"**{i}. {name}** — {days} day(s)\n"
+            lb_text += f"**{rank}. {name} —** {days} day(s)\n"
+        rank += 1
 
-    # GOLD embed (same as your other leaderboards)
+    # Gold embed (same style as other leaderboards)
     embed = discord.Embed(
-        title="Days Since Last Check-in Leaderboard",
-        description="Rankings by how long it has been since each user last checked in.",
-        color=discord.Color.gold()      # ← GOLD COLOR FIX HERE
+        title="🏆 Days Since Last Check-in Leaderboard",
+        description="Rankings by how long it has been since each user last checked in.\n\n**Leaderboard**",
+        color=0xD4AF37  # GOLD
     )
 
-    embed.add_field(
-        name="Leaderboard",
-        value=leaderboard_text or "No data available.",
-        inline=False
-    )
+    embed.add_field(name="‎", value=lb_text, inline=False)  # invisible field name for clean formatting
 
     await ctx.send(embed=embed)
+
 
 
 
