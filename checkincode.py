@@ -805,21 +805,13 @@ async def ll(ctx):
 
 @bot.command()
 async def dl(ctx):
-    """Leaderboard of number of days since last check-in (does not appear in daily reset)."""
-
+    """Shows leaderboard of days since last check-in, with gold leaderboard formatting."""
     data = await get_channel_data(ctx.guild.id, ctx.channel.id)
 
+    # Ensure last_checkins exists
     last_checkins = data.get("last_checkins", {})
-    if not isinstance(last_checkins, dict):
-        last_checkins = {}
 
-    guild_tz_name = data.get("timezone", "UTC")
-    try:
-        guild_tz = pytz.timezone(guild_tz_name)
-    except:
-        guild_tz = pytz.UTC
-
-    # ------- SAFE PARSER -------
+    # Parse reset time safely
     def parse_reset_time(value):
         if not isinstance(value, str):
             return 0, 0
@@ -833,87 +825,71 @@ async def dl(ctx):
 
     reset_hour, reset_minute = parse_reset_time(data.get("reset_time", "00:00"))
 
-    last_reset_utc = data.get("last_reset_timestamp")
-    if last_reset_utc is None:
-        last_reset_dt = None
+    # Get guild timezone
+    timezone_str = data.get("timezone", "America/Los_Angeles")
+    try:
+        guild_tz = pytz.timezone(timezone_str)
+    except:
+        guild_tz = pytz.timezone("America/Los_Angeles")
+
+    # Determine the last reset moment
+    now = datetime.now(guild_tz)
+    today_reset = now.replace(hour=reset_hour, minute=reset_minute, second=0, microsecond=0)
+    if now < today_reset:
+        last_reset = today_reset - timedelta(days=1)
     else:
-        try:
-            last_reset_dt = datetime.fromisoformat(last_reset_utc).replace(tzinfo=pytz.UTC)
-        except:
-            last_reset_dt = None
+        last_reset = today_reset
 
-    now_guild = datetime.now(guild_tz)
+    leaderboard_entries = []
 
-    today_reset = guild_tz.localize(
-        datetime(
-            now_guild.year,
-            now_guild.month,
-            now_guild.day,
-            reset_hour,
-            reset_minute,
-        )
+    # Build leaderboard
+    for member in ctx.guild.members:
+        if member.bot:
+            continue
+
+        user_id = str(member.id)
+        if user_id not in last_checkins:
+            leaderboard_entries.append((member.display_name, None))
+            continue
+
+        last_checkin_utc = last_checkins[user_id]
+        last_checkin_local = last_checkin_utc.astimezone(guild_tz)
+
+        if last_checkin_local > last_reset:
+            days = 0
+        else:
+            deltas = now - last_checkin_local
+            days = deltas.days
+
+        leaderboard_entries.append((member.display_name, days))
+
+    # Sort: longest since check-in first
+    leaderboard_entries.sort(key=lambda x: (x[1] is None, x[1] if x[1] is not None else 99999), reverse=True)
+
+    # Format leaderboard text
+    leaderboard_text = ""
+    for i, (name, days) in enumerate(leaderboard_entries, start=1):
+        if days is None:
+            leaderboard_text += f"**{i}. {name}** — Never checked in\n"
+        else:
+            leaderboard_text += f"**{i}. {name}** — {days} day(s)\n"
+
+    # GOLD embed (same as your other leaderboards)
+    embed = discord.Embed(
+        title="Days Since Last Check-in Leaderboard",
+        description="Rankings by how long it has been since each user last checked in.",
+        color=discord.Color.gold()      # ← GOLD COLOR FIX HERE
     )
 
-    if now_guild < today_reset:
-        effective_reset = today_reset - timedelta(days=1)
-    else:
-        effective_reset = today_reset
+    embed.add_field(
+        name="Leaderboard",
+        value=leaderboard_text or "No data available.",
+        inline=False
+    )
 
-    effective_reset_utc = effective_reset.astimezone(pytz.UTC)
+    await ctx.send(embed=embed)
 
-    results = []
 
-    for user_id_str, last_checkin_ts in last_checkins.items():
-        try:
-            last_dt = datetime.fromisoformat(last_checkin_ts).replace(tzinfo=pytz.UTC)
-        except:
-            last_dt = None
-
-        if last_dt is None:
-            days = 9999
-        else:
-            if last_dt > effective_reset_utc:
-                days = 0
-            else:
-                if last_reset_dt is None:
-                    days = 0
-                else:
-                    diff = now_guild - effective_reset
-                    days = diff.days
-                    if days < 0:
-                        days = 0
-
-        user_obj = ctx.guild.get_member(int(user_id_str))
-        username = user_obj.display_name if user_obj else f"User {user_id_str}"
-
-        results.append((username, days))
-
-    results.sort(key=lambda x: x[1], reverse=True)
-
-    if not results:
-        await ctx.send("No check-ins have been recorded yet.")
-        return
-
-    # ------- GOLD FORMATTING -------
-    lines = ["📅 **Days Since Last Check-in Leaderboard**\n"]
-
-    for rank, (username, days) in enumerate(results, start=1):
-        lines.append(f"**{rank}.** **{username}** — **{days} day(s)**")
-
-    leaderboard_output = "\n".join(lines)
-
-    # Discord message length safety
-    if len(leaderboard_output) <= 1900:
-        await ctx.send(leaderboard_output)
-    else:
-        chunk = ""
-        for line in lines:
-            if len(chunk) + len(line) + 2 > 1900:
-                await ctx.send(chunk)
-                chunk = ""
-            chunk += line + "\n"
-        if chunk:
-            await ctx.send(chunk)
 
 
 
