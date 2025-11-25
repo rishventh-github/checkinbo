@@ -13,6 +13,8 @@ from dateutil import parser
 from io import BytesIO
 from PIL import Image
 import asyncio
+from zoneinfo import ZoneInfo
+
 
 
 load_dotenv()
@@ -803,72 +805,84 @@ async def ll(ctx):
 
 @bot.command()
 async def dl(ctx):
-    """
-    c.dl
-    Shows a leaderboard ranking users by how many days it has been
-    since they last posted a check-in.
-    Does NOT appear in the daily reset summary.
-    """
-    guild_id = ctx.guild.id
-    channel_id = ctx.channel.id
+    """Leaderboard for # of days since last check-in."""
 
-    # Load channel data
-    channel_data = await get_channel_data(guild_id, channel_id)
-    last_checkins = channel_data.get("last_checkins", {})
+    channel_id = str(ctx.channel.id)
+    data = await get_channel_data(channel_id)
 
-    # Get guild timezone
-    guild_settings = await get_guild_settings(guild_id)
-    timezone_str = guild_settings.get("timezone", "America/Los_Angeles")
+    last_checkins = data.get("last_checkins", {})
+    reset_time_str = data.get("reset_time", "00:00")
+    guild_timezone = data.get("timezone", "UTC")
+
+    # Convert timezone string to tzinfo
     try:
-        guild_tz = pytz.timezone(timezone_str)
-    except pytz.exceptions.UnknownTimeZoneError:
-        guild_tz = pytz.timezone("America/Los_Angeles")
+        tz = ZoneInfo(guild_timezone)
+    except:
+        tz = ZoneInfo("UTC")
 
-    now = datetime.now(guild_tz)
+    # Parse reset time
+    reset_hour, reset_minute = map(int, reset_time_str.split(":"))
 
-    days_since = {}
+    now = datetime.now(tz)
+    today_reset = now.replace(hour=reset_hour, minute=reset_minute, second=0, microsecond=0)
 
-    for member in ctx.guild.members:
-        if member.bot:
-            continue
+    if now < today_reset:
+        last_reset = today_reset - timedelta(days=1)
+    else:
+        last_reset = today_reset
 
-        uid = str(member.id)
+    # Function: count how many reset boundaries occurred since last check-in
+    def count_resets_since(last_check):
+        if last_check is None:
+            return 9999  # treat as huge number (never checked in)
 
-        if uid in last_checkins:
-            # stored in UTC → convert to guild timezone
-            last_time = last_checkins[uid].astimezone(guild_tz)
-            diff_days = (now.date() - last_time.date()).days
-        else:
-            # never checked in
-            diff_days = "Never"
+        # Convert timestamp
+        last_check_dt = datetime.fromtimestamp(last_check, tz)
 
-        days_since[member] = diff_days
+        # If user last checked in AFTER the most recent reset → zero resets
+        if last_check_dt >= last_reset:
+            return 1  # first reset not yet passed, so treat as “one reset boundary available”
 
-    # Sort leaderboard: "Never" appears last
-    sorted_list = sorted(
-        days_since.items(),
-        key=lambda x: (999999 if x[1] == "Never" else x[1]),
-        reverse=True
-    )
+        # Count how many reset times occur between last_check_dt and now
+        count = 0
+        check_point = last_reset
 
-    # Format leaderboard output
-    leaderboard_lines = []
-    for i, (member, days) in enumerate(sorted_list, start=1):
-        real_name = channel_data.get("userToReal", {}).get(str(member.id), member.display_name)
-        days_str = f"{days} day(s)" if isinstance(days, int) else "Never checked in"
-        leaderboard_lines.append(f"{i}. **{real_name}** — {days_str}")
+        while check_point > last_check_dt:
+            count += 1
+            check_point -= timedelta(days=1)
 
-    leaderboard_text = "\n".join(leaderboard_lines) if leaderboard_lines else "No users found."
+        return count
+
+    # Build leaderboard list
+    results = []
+
+    for user_id, last_time in last_checkins.items():
+        resets_since = count_resets_since(last_time)
+
+        # Compute days since last check-in
+        # First reset does NOT increment from 0
+        days_since = max(0, resets_since - 1)
+
+        results.append((int(user_id), days_since))
+
+    # Sort by most days since last check-in
+    results.sort(key=lambda x: x[1], reverse=True)
+
+    # Build leaderboard message
+    description = ""
+
+    for rank, (user_id, days) in enumerate(results, start=1):
+        user = ctx.guild.get_member(user_id)
+        name = user.display_name if user else f"User {user_id}"
+        description += f"**{rank}. {name}** — {days} day(s)\n"
 
     embed = discord.Embed(
-        title="Days Since Last Check-in Leaderboard",
-        description="Rankings by how long it has been since each user last checked in.",
-        color=discord.Color.gold()
+        title="📆 Days Since Last Check-in Leaderboard",
+        description=description if description else "No check-in data yet.",
+        color=discord.Color.blurple()
     )
-    embed.add_field(name="Leaderboard", value=leaderboard_text, inline=False)
 
     await ctx.send(embed=embed)
-
 
 
 @bot.command()
