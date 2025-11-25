@@ -809,19 +809,17 @@ async def dl(ctx):
 
     data = await get_channel_data(ctx.guild.id, ctx.channel.id)
 
-    # Pull last check-in timestamps
     last_checkins = data.get("last_checkins", {})
     if not isinstance(last_checkins, dict):
         last_checkins = {}
 
-    # Pull timezone
     guild_tz_name = data.get("timezone", "UTC")
     try:
         guild_tz = pytz.timezone(guild_tz_name)
     except:
         guild_tz = pytz.UTC
 
-    # ------- SAFE PARSING OF RESET TIME -------
+    # ------- SAFE PARSER -------
     def parse_reset_time(value):
         if not isinstance(value, str):
             return 0, 0
@@ -835,11 +833,8 @@ async def dl(ctx):
 
     reset_hour, reset_minute = parse_reset_time(data.get("reset_time", "00:00"))
 
-    # Pull last reset timestamp
-    # This should be stored in UTC when your reset task fires
     last_reset_utc = data.get("last_reset_timestamp")
     if last_reset_utc is None:
-        # If no reset has ever occurred, everyone is at 0 days since last check-in
         last_reset_dt = None
     else:
         try:
@@ -847,10 +842,8 @@ async def dl(ctx):
         except:
             last_reset_dt = None
 
-    # Convert NOW to guild timezone
     now_guild = datetime.now(guild_tz)
 
-    # Calculate today's reset time in guild timezone
     today_reset = guild_tz.localize(
         datetime(
             now_guild.year,
@@ -861,70 +854,58 @@ async def dl(ctx):
         )
     )
 
-    # If today's reset hasn't happened yet, we consider the previous day's reset
     if now_guild < today_reset:
         effective_reset = today_reset - timedelta(days=1)
     else:
         effective_reset = today_reset
 
-    # Convert effective_reset to UTC
     effective_reset_utc = effective_reset.astimezone(pytz.UTC)
 
-    # ---------- COMPUTE DAYS SINCE LAST CHECK-IN ----------
     results = []
 
     for user_id_str, last_checkin_ts in last_checkins.items():
         try:
-            # stored as ISO UTC
             last_dt = datetime.fromisoformat(last_checkin_ts).replace(tzinfo=pytz.UTC)
         except:
             last_dt = None
 
         if last_dt is None:
-            # Never checked in = infinite? We'll treat it as very high, but realistically 9999 is fine
             days = 9999
         else:
-            # Case 1: last check-in happened AFTER the last reset → 0 days
             if last_dt > effective_reset_utc:
                 days = 0
             else:
-                # Case 2: last check-in BEFORE the last reset
-                # How many resets have passed since?
                 if last_reset_dt is None:
-                    # No reset recorded → 0 days
                     days = 0
                 else:
-                    # days since last reset
                     diff = now_guild - effective_reset
                     days = diff.days
                     if days < 0:
                         days = 0
 
-        # Convert to display name
         user_obj = ctx.guild.get_member(int(user_id_str))
         username = user_obj.display_name if user_obj else f"User {user_id_str}"
 
         results.append((username, days))
 
-    # Sort descending (most days since check-in at top)
     results.sort(key=lambda x: x[1], reverse=True)
 
-    # ---------- BUILD LEADERBOARD ----------
     if not results:
         await ctx.send("No check-ins have been recorded yet.")
         return
 
-    lines = ["📅 **Days Since Last Check-in Leaderboard**"]
+    # ------- GOLD FORMATTING -------
+    lines = ["📅 **Days Since Last Check-in Leaderboard**\n"]
+
     for rank, (username, days) in enumerate(results, start=1):
-        lines.append(f"**{rank}.** {username} — `{days}` day(s)")
+        lines.append(f"**{rank}.** **{username}** — **{days} day(s)**")
 
     leaderboard_output = "\n".join(lines)
 
-    # Discord message limit safety (just in case)
+    # Discord message length safety
     if len(leaderboard_output) <= 1900:
         await ctx.send(leaderboard_output)
     else:
-        # Split into safe chunks
         chunk = ""
         for line in lines:
             if len(chunk) + len(line) + 2 > 1900:
@@ -933,6 +914,7 @@ async def dl(ctx):
             chunk += line + "\n"
         if chunk:
             await ctx.send(chunk)
+
 
 
 
