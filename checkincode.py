@@ -655,15 +655,8 @@ async def c(ctx, *checkIn):
     # -----------------------------
     # 1. FETCH GUILD TIMEZONE HERE
     # -----------------------------
-    timezone_result = await bot.pool.fetchrow(
-        "SELECT timezone FROM guild_timezones WHERE guild_id = $1",
-        guild_id
-    )
+    guild_timezone = data.get("timezone", "UTC")
 
-    if timezone_result is None:
-        guild_timezone = "UTC"
-    else:
-        guild_timezone = timezone_result["timezone"]
 
     # If banned
     if user_id in data.get("banned_users", set()):
