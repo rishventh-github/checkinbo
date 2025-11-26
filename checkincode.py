@@ -813,7 +813,7 @@ async def dl(ctx):
     # Fetch channel data
     data = await get_channel_data(ctx.guild.id, ctx.channel.id)
     if data is None:
-        await ctx.send("⚠️ This channel is not configured. Please run `c.cr` first.")
+        await ctx.send("This channel is not configured. Please run `c.cr` first.")
         return
 
     reset_hour = data.get("reset_hour", 0)
@@ -887,7 +887,7 @@ async def dl(ctx):
 
     # Gold embed (same style as other leaderboards)
     embed = discord.Embed(
-        title="🏆 Days Since Last Check-in Leaderboard",
+        title="Days Since Last Check-in Leaderboard",
         description="Rankings by how long it has been since each user last checked in.\n\n**Leaderboard**",
         color=0xD4AF37  # GOLD
     )
