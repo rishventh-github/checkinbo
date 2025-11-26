@@ -477,7 +477,9 @@ async def get_channel_data(guild_id, channel_id):
            "word_min": 1,
            "missed_users": {},  # Count of missed check-ins {user_id: count}
            "reset_time": None,  # Channel-specific reset time (HHMMSS string)
-           "last_reset_time": None  # Last time this channel was reset (datetime object)
+           "last_reset_time": None,  # Last time this channel was reset (datetime object)
+           "days_since_last": {},
+           "last_checkins": {}
        }
 
 
@@ -805,96 +807,98 @@ async def ll(ctx):
 
 @bot.command()
 async def dl(ctx):
-    """Leaderboard showing how many days have passed since each user last checked in."""
+    """Leaderboard showing the number of days since a user last checked in."""
+    guild_id = ctx.guild.id
+    channel_id = ctx.channel.id
 
-    guild_id = str(ctx.guild.id)
-    channel_id = str(ctx.channel.id)
+    # Get channel data
+    channel_data = await get_channel_data(guild_id, channel_id)
+    if channel_data is None:
+        return await ctx.send("No data found for this channel.")
 
-    # Fetch channel data
-    data = await get_channel_data(ctx.guild.id, ctx.channel.id)
-    if data is None:
-        await ctx.send("This channel is not configured. Please run `c.cr` first.")
-        return
+    last_checkins = channel_data.get("last_checkins", {})
+    days_data = channel_data.get("days_since_last", {})
+    user_to_real = channel_data.get("userToReal", {})
 
-    reset_hour = data.get("reset_hour", 0)
-    reset_minute = data.get("reset_minute", 0)
-    timezone_str = data.get("timezone", "UTC")
-    last_checkins = data.get("last_checkins", {})
+    leaderboard = []
 
-    # Load timezone
+    # Timezone fallback
+    guild_timezone = channel_data.get("timezone", "UTC")
     try:
-        guild_tz = pytz.timezone(timezone_str)
+        tz = pytz.timezone(guild_timezone)
     except:
-        guild_tz = pytz.UTC
+        tz = pytz.UTC
 
-    # Compute today's reset time in that timezone
-    now = datetime.now(guild_tz)
-    last_reset = now.replace(hour=reset_hour, minute=reset_minute, second=0, microsecond=0)
-    if now < last_reset:
-        last_reset -= timedelta(days=1)
+    now_local = datetime.now(tz)
 
-    leaderboard_entries = []
+    for real_id_str, user_id in user_to_real.items():
+        real_id_str = str(real_id_str)
 
-    for member in ctx.guild.members:
-        if member.bot:
+        user = ctx.guild.get_member(int(user_id))
+        if not user:
             continue
 
-        user_id = str(member.id)
+        if real_id_str in last_checkins:
+            last_time_str = last_checkins[real_id_str]
+            if isinstance(last_time_str, str):
+                try:
+                    last_time = datetime.fromisoformat(last_time_str).replace(tzinfo=pytz.UTC)
+                except:
+                    continue
+            else:
+                last_time = last_time_str
 
-        # Never checked in
-        if user_id not in last_checkins:
-            leaderboard_entries.append((member.display_name, None))
-            continue
+            last_local = last_time.astimezone(tz)
+            day_diff = (now_local.date() - last_local.date()).days
 
-        last_checkin_utc = last_checkins[user_id]
+            # Respect stored data if it's higher
+            stored = days_data.get(user_id, 0)
+            day_count = max(day_diff, stored)
 
-        # Convert string → datetime if needed
-        if isinstance(last_checkin_utc, str):
-            try:
-                last_checkin_utc = datetime.fromisoformat(last_checkin_utc)
-            except:
-                leaderboard_entries.append((member.display_name, None))
-                continue
+            leaderboard.append((user.display_name, day_count))
 
-        # Ensure timezone-aware
-        if last_checkin_utc.tzinfo is None:
-            last_checkin_utc = last_checkin_utc.replace(tzinfo=pytz.UTC)
-
-        # Convert to guild timezone
-        last_checkin_local = last_checkin_utc.astimezone(guild_tz)
-
-        # If the user checked in after the last reset → 0 days
-        if last_checkin_local > last_reset:
-            days = 0
         else:
-            days = (now - last_checkin_local).days
+            # Never checked in — represent as special case (None)
+            leaderboard.append((user.display_name, None))
 
-        leaderboard_entries.append((member.display_name, days))
-
-    # Sorting: None (never checked in) goes first, then highest number
-    leaderboard_entries.sort(key=lambda x: (x[1] is not None, -(x[1] or 0)))
-
-    # Format leaderboard text
-    lb_text = ""
-    rank = 1
-
-    for name, days in leaderboard_entries:
+    # Sort: first by those with actual days (descending), then by Never Checked In at bottom
+    def sort_key(entry):
+        name, days = entry
         if days is None:
-            lb_text += f"**{rank}. {name} —** *Never checked in*\n"
-        else:
-            lb_text += f"**{rank}. {name} —** {days} day(s)\n"
-        rank += 1
+            return (-1, 0, name.lower())  # bottom
+        return (1, days, name.lower())  # top, sorted by days
 
-    # Gold embed (same style as other leaderboards)
+    leaderboard.sort(key=sort_key, reverse=True)
+
+    # Limit display
+    top_limit = min(50, len(leaderboard))
+    leaderboard = leaderboard[:top_limit]
+
+    if not leaderboard:
+        return await ctx.send("There is no data for this leaderboard yet.")
+
+    # GOLD FORMATTING
     embed = discord.Embed(
-        title="Days Since Last Check-in Leaderboard",
-        description="Rankings by how long it has been since each user last checked in.\n\n**Leaderboard**",
-        color=0xD4AF37  # GOLD
+        title="📊 Days Since Last Check-In Leaderboard",
+        description="",
+        color=discord.Color.gold()
     )
 
-    embed.add_field(name="‎", value=lb_text, inline=False)  # invisible field name for clean formatting
+    placement_emojis = ["🥇", "🥈", "🥉"]
+
+    for i, (name, days) in enumerate(leaderboard, start=1):
+        emoji = placement_emojis[i - 1] if i <= 3 else f"**{i}.**"
+
+        if days is None:
+            value = "Never checked in ❌"
+        else:
+            value = f"**{days}** days"
+
+        embed.description += f"{emoji} — **{name}**: {value}\n"
 
     await ctx.send(embed=embed)
+
+
 
 
 
@@ -1962,264 +1966,397 @@ async def resetTime():
                pass
 
 
+# async def _perform_channel_reset(guild_id, channel_id, channel_data, now_guild_tz, formatted_date):
+#     """
+#     Performs the reset for a channel: calculates and posts leaderboards, resets daily check-in lists,
+#     and persists changes to Postgres. Now includes Gemini summary for the period since the last reset,
+#     analyzing both text and image content.
+#     """
+#     print(
+#         f"INFO: Starting reset process for channel {channel_id} in guild {guild_id} at {now_guild_tz.strftime('%Y-%m-%d %H:%M:%S')}.")
+#
+#     google_api_key = os.getenv("GOOGLE_API_KEY")
+#     gemini_summary_text = ""
+#
+#     if not google_api_key:
+#         print(
+#             f"ERROR: GOOGLE_API_KEY environment variable not set. Cannot generate Gemini summary for channel {channel_id}.")
+#         gemini_summary_text = "Automatic summary failed: Google API Key not configured."
+#     else:
+#         genai.configure(api_key=google_api_key)
+#         gemini_model = genai.GenerativeModel('gemini-1.5-flash')
+#
+#     start_time_for_summary_fetch_utc = channel_data.get("last_reset_time")
+#     if not start_time_for_summary_fetch_utc or not isinstance(start_time_for_summary_fetch_utc,
+#                                                               datetime) or not start_time_for_summary_fetch_utc.tzinfo:
+#         guild_settings = await get_guild_settings(guild_id)
+#         timezone_str = guild_settings.get("timezone", "America/Los_Angeles")
+#         try:
+#             guild_tz = pytz.timezone(timezone_str)
+#         except pytz.exceptions.UnknownTimeZoneError:
+#             guild_tz = pytz.timezone("America/Los_Angeles")
+#
+#         start_of_day_guild_tz = now_guild_tz.replace(hour=0, minute=0, second=0, microsecond=0)
+#         start_time_for_summary_fetch_utc = start_of_day_guild_tz.astimezone(pytz.utc)
+#         print(f"DEBUG: Using fallback start time for summary fetch: {start_time_for_summary_fetch_utc}")
+#     else:
+#         print(f"DEBUG: Using last_reset_time for summary fetch: {start_time_for_summary_fetch_utc}")
+#
+#     channel = bot.get_channel(channel_id)
+#     if not channel:
+#         print(
+#             f"WARNING: Channel {channel_id} not found or inaccessible in guild {guild_id}. Cannot send summary or fetch messages.")
+#         gemini_summary_text = "Automatic summary failed: Channel not found or accessible."
+#     else:
+#         # --- MODIFIED PROMPT INSTRUCTION FOR STRUCTURED OUTPUT AND ENHANCED IMAGE RELEVANCE ---
+#         content_for_gemini_prompt = [
+#             f"Provide a concise summary of the following daily check-ins from Discord users. "
+#             f"Start with an 'Overall Summary' (1-3 bullet points on key themes). "
+#             f"Then, add a section titled 'Individual Contributions'. "
+#             f"For each user, provide a concise summary of their specific check-in, detailing their main activity/update from both text and image (if provided). "
+#             f"**Crucial Instruction for Image Relevance & Detail:**\n"
+#             f"1.  **Bot Development/Testing Images:** If a user checks in about **developing, debugging, or testing a Discord bot**, and provides an image that appears to be a **screenshot of Discord content (such as bot outputs, embeds, summaries, or command results)**, you **must consider this image highly relevant** to their stated activity. Describe what the image shows (e.g., 'The image displays the bot's summary output, confirming the user's testing of the summary function.') and how it directly relates to their check-in. "
+#             f"2.  **Measurements & Values:** If an image contains **clear numerical measurements or values on instruments like beakers, gauges, scales, or thermometers**, and these values are relevant to the user's check-in text (e.g., 'measured x', 'experiment result', 'tracked progress'), you **must precisely read and state the exact value displayed**. For example, if a beaker is shown, state 'The image shows a beaker with approximately [X] mL of liquid.' Pay close attention to scale markings and the liquid's meniscus for accuracy, interpolating between marked values if necessary. "
+#             f"3.  **Other Irrelevant Images:** If an image is otherwise irrelevant or a generic photo unrelated to the user's specific text description, explicitly state 'Image: Irrelevant'. "
+#             f"4.  **No Image:** If no image was provided, explicitly state 'Image: None provided'. "
+#             f"Use bullet points for the overall summary and distinct, nested bullet points for each user's contribution. "
+#             f"Example format:\n"
+#             f"**Overall Summary:**\n"
+#             f"- [Overall theme 1]\n"
+#             f"- [Overall theme 2]\n"
+#             f"\n"
+#             f"**Individual Contributions:**\n"
+#             f"- **[User A]**: [Summary of User A's check-in. Image: Relevant description / Irrelevant / None provided.]\n"
+#             f"- **[User B]**: [Summary of User B's check-in. Image: Relevant description / Irrelevant / None provided.]\n"
+#             f"\nHere are the check-ins:\n"
+#         ]
+#         # --- END MODIFIED PROMPT INSTRUCTION ---
+#
+#         checkin_command_string = "c.c"
+#
+#         try:
+#             async for message in channel.history(after=start_time_for_summary_fetch_utc, limit=500):
+#                 if not message.author.bot and (message.content or message.attachments):
+#                     cleaned_content = message.content.strip()
+#                     if cleaned_content.lower().startswith(checkin_command_string.lower()):
+#                         actual_checkin_content = cleaned_content[len(checkin_command_string):].strip()
+#
+#                         if actual_checkin_content or message.attachments:
+#                             content_for_gemini_prompt.append(
+#                                 f"\n--- Check-in by {message.author.display_name} ({message.created_at.strftime('%H:%M')}):\n"
+#                             )
+#                             if actual_checkin_content:
+#                                 content_for_gemini_prompt.append(actual_checkin_content)
+#                             else:
+#                                 content_for_gemini_prompt.append("[No text provided in check-in message.]")
+#
+#                             has_image_for_gemini = False
+#                             if message.attachments:
+#                                 for attachment in message.attachments:
+#                                     if 'image' in attachment.content_type:
+#                                         try:
+#                                             image_bytes = await attachment.read()
+#                                             pil_image = Image.open(BytesIO(image_bytes))
+#                                             content_for_gemini_prompt.append(pil_image)
+#                                             has_image_for_gemini = True
+#                                             print(
+#                                                 f"DEBUG: Found and prepared image for {message.author.display_name}'s check-in for Gemini.")
+#                                             break
+#                                         except Exception as e:
+#                                             content_for_gemini_prompt.append(
+#                                                 f"[Error loading image: {attachment.filename}]")
+#                                             print(
+#                                                 f"ERROR: Could not load image for Gemini for {message.author.display_name}'s check-in ({attachment.filename}): {e}")
+#
+#                             if not has_image_for_gemini:
+#                                 content_for_gemini_prompt.append("[No image provided with check-in.]")
+#
+#             if len(content_for_gemini_prompt) == 1:
+#                 gemini_summary_text = "No check-in messages (text or image) found since last reset for summarization."
+#             elif not google_api_key:
+#                 gemini_summary_text = "Automatic summary skipped: Google API Key not configured."
+#             else:
+#                 try:
+#                     gemini_response = gemini_model.generate_content(content_for_gemini_prompt)
+#                     gemini_summary_text = gemini_response.text.strip()
+#
+#                     if len(gemini_summary_text) > MAX_EMBED_FIELD_LENGTH:
+#                         gemini_summary_text = gemini_summary_text[:MAX_EMBED_FIELD_LENGTH - 3] + "..."
+#                         print(
+#                             f"WARNING: Gemini summary truncated to {MAX_EMBED_FIELD_LENGTH} characters for channel {channel_id}.")
+#
+#                 except Exception as e:
+#                     gemini_summary_text = f"Automatic summary failed (Gemini API Error): {e}"
+#                     print(f"ERROR: Gemini API Error during automatic summary for channel {channel_id}: {e}")
+#
+#         except discord.errors.Forbidden:
+#             gemini_summary_text = "Automatic summary failed: Bot does not have permission to read message history."
+#             print(f"ERROR: Missing permissions to read history in channel {channel_id} of guild {guild_id}.")
+#         except discord.errors.HTTPException as e:
+#             gemini_summary_text = f"Automatic summary failed (Discord API Error): {e}"
+#             print(f"ERROR: Discord API Error fetching messages for summary in channel {channel_id}: {e}")
+#         except Exception as e:
+#             gemini_summary_text = f"Automatic summary failed (Unexpected Error): {e}"
+#             print(f"ERROR: Unexpected error during message fetching for summary in channel {channel_id}: {e}")
+#
+#     # --- Save the current reset time to the channel data ---
+#     channel_data["last_reset_time"] = now_guild_tz.astimezone(pytz.utc)
+#
+#     # --- Prepare list of users who checked in for the day that just ended ---
+#     checked_users_names = []
+#     for user_id in channel_data.get("dailyCheckedUsers", []):
+#         try:
+#             user = await bot.fetch_user(user_id)
+#             real_name = channel_data.get("userToReal", {}).get(str(user_id), user.display_name)
+#             checked_users_names.append(real_name)
+#         except (discord.NotFound, discord.HTTPException):
+#             checked_users_names.append(f"Unknown User ({user_id})")
+#     checked_users_list_str = "\n".join(checked_users_names) if checked_users_names else "No users checked in today."
+#     print(f"DEBUG: Checked users for summary: {checked_users_names}")
+#
+#     # --- Find users who missed check-in for the day that just ended ---
+#     unchecked_user_ids = []
+#     unchecked_users_names = []
+#     guild = bot.get_guild(guild_id)
+#     if guild:
+#         for member in guild.members:
+#             if not member.bot and member.id not in channel_data.get("banned_users",
+#                                                                     set()) and member.id not in channel_data.get(
+#                     "dailyCheckedUsers", []):
+#                 try:
+#                     real_name = channel_data.get("userToReal", {}).get(str(member.id), member.display_name)
+#                 except (discord.NotFound, discord.HTTPException):
+#                     real_name = f"Unknown User ({member.id})"
+#                 unchecked_users_names.append(real_name)
+#                 unchecked_user_ids.append(member.id)
+#     unchecked_list_str = "\n".join(unchecked_users_names) if unchecked_users_names else "Everyone checked in today!"
+#     print(f"DEBUG: Unchecked users for summary: {unchecked_users_names}")
+#
+#     # --- Update missed_users dict (for persistent tracking of consecutive misses) ---
+#     missed_users = channel_data.get("missed_users", {})
+#     for user_id in unchecked_user_ids:
+#         missed_users[user_id] = missed_users.get(user_id, 0) + 1
+#     channel_data["missed_users"] = missed_users
+#     print(f"DEBUG: Updated missed_users in cache: {channel_data['missed_users']}")
+#
+#     # --- Reset daily check-ins for the new day (empty the list) ---
+#     channel_data["dailyCheckedUsers"] = []
+#     print(f"DEBUG: dailyCheckedUsers reset in cache.")
+#
+#     # --- Clean up 'users' data if check-in count is zero ---
+#     # Corrected line for the SyntaxError:
+#     channel_data["users"] = {k: v for k, v in channel_data.get("users", {}).items() if v > 0}
+#     print(f"DEBUG: Cleaned 'users' data in cache.")
+#
+#     # --- Save all updated channel data to the database ---
+#     await save_specific_data_to_db(guild_id, channel_id, channel_data)
+#     print(f"INFO: Channel {channel_id} data saved to DB after reset.")
+#
+#     # --- Prepare check-in leaderboard for the embed ---
+#     checkins_by_real_name = {}
+#     for user_id, checkins in channel_data.get("users", {}).items():
+#         try:
+#             user = await bot.fetch_user(user_id)
+#             real_name = channel_data.get("userToReal", {}).get(str(user_id), user.display_name)
+#         except (discord.NotFound, discord.HTTPException):
+#             real_name = f"Unknown User ({user_id})"
+#         checkins_by_real_name[real_name] = checkins_by_real_name.get(real_name, 0) + checkins
+#     sorted_checkins = sorted(checkins_by_real_name.items(), key=lambda x: x[1], reverse=True)
+#     leaderboard_message = (
+#         "\n".join(
+#             f"{i + 1}. **{real_name}**: {checkins} check-in(s)"
+#             for i, (real_name, checkins) in enumerate(sorted_checkins)
+#         )
+#         if sorted_checkins else "No valid check-ins recorded."
+#     )
+#     print(f"DEBUG: Leaderboard message prepared.")
+#
+#     # --- Prepare missed check-in leaderboard for the embed ---
+#     missed_by_real_name = {}
+#     for user_id, missed in channel_data.get("missed_users", {}).items():
+#         try:
+#             user = await bot.fetch_user(user_id)
+#             real_name = channel_data.get("userToReal", {}).get(str(user_id), user.display_name)
+#         except (discord.NotFound, discord.HTTPException):
+#             real_name = f"Unknown User ({user_id})"
+#         missed_by_real_name[real_name] = missed_by_real_name.get(real_name, 0) + missed
+#     sorted_missed = sorted(missed_by_real_name.items(), key=lambda x: x[1], reverse=True)
+#     missed_leaderboard = (
+#         "\n".join(
+#             f"{i + 1}. **{real_name}**: {missed} missed check-in(s)"
+#             for i, (real_name, missed) in enumerate(sorted_missed)
+#         )
+#         if sorted_missed else "No missed check-ins."
+#     )
+#     print(f"DEBUG: Missed leaderboard message prepared.")
+#
+#     # --- Send the comprehensive summary embed to the channel ---
+#     if channel:
+#         embed = discord.Embed(
+#             title=f"Daily Check-in Summary — {formatted_date}",
+#             description=f"Here is the breakdown of today's check-ins for this channel (<#{channel_id}>):",
+#             color=discord.Color.blue()
+#         )
+#         # Add the AI-generated summary as the first field
+#         embed.add_field(name="AI-Generated Daily Summary (since last reset)", value=gemini_summary_text, inline=False)
+#
+#         # Add the lists of checked-in and unchecked users
+#         embed.add_field(name="Checked-in Users", value=checked_users_list_str, inline=False)
+#         embed.add_field(name="Users Who Didn't Check-in", value=unchecked_list_str, inline=False)
+#
+#         # Add the leaderboards
+#         embed.add_field(name="Check-in Leaderboard", value=leaderboard_message, inline=False)
+#         embed.add_field(name="Missed Check-ins Leaderboard", value=missed_leaderboard, inline=False)
+#
+#         # Add the reset notice
+#         embed.add_field(name="Reset Notice", value="Daily check-in data has been reset for this channel.", inline=False)
+#
+#         try:
+#             await channel.send(embed=embed)
+#             print(f"INFO: Sent reset summary to channel {channel_id} in guild {guild_id}.")
+#         except discord.errors.Forbidden:
+#             print(
+#                 f"ERROR: Missing permissions to send message in channel {channel_id} of guild {guild_id}. Check bot role permissions.")
+#         except discord.errors.HTTPException as e:
+#             print(f"ERROR: Error sending message to channel {channel_id} of guild {guild_id}: {e}")
+#         except Exception as e:
+#             print(
+#                 f"CRITICAL ERROR: Unexpected error while sending reset summary to channel {channel_id} of guild {guild_id}: {e}")
+#     else:
+#         print(f"WARNING: Channel {channel_id} not found or inaccessible in guild {guild_id}. Summary not sent.")
 async def _perform_channel_reset(guild_id, channel_id, channel_data, now_guild_tz, formatted_date):
     """
-    Performs the reset for a channel: calculates and posts leaderboards, resets daily check-in lists,
-    and persists changes to Postgres. Now includes Gemini summary for the period since the last reset,
-    analyzing both text and image content.
+    Performs the daily reset for a channel: updates missed check-ins, increments days-since-last-check-in counters,
+    resets daily check-in lists, and persists changes.
+    Gemini summary fully removed per user request.
     """
-    print(
-        f"INFO: Starting reset process for channel {channel_id} in guild {guild_id} at {now_guild_tz.strftime('%Y-%m-%d %H:%M:%S')}.")
+    print(f"INFO: Starting reset for channel {channel_id} in guild {guild_id} at {now_guild_tz}")
 
-    google_api_key = os.getenv("GOOGLE_API_KEY")
-    gemini_summary_text = ""
+    # Last reset tracking
+    channel_data["last_reset_time"] = now_guild_tz.astimezone(pytz.UTC)
 
-    if not google_api_key:
-        print(
-            f"ERROR: GOOGLE_API_KEY environment variable not set. Cannot generate Gemini summary for channel {channel_id}.")
-        gemini_summary_text = "Automatic summary failed: Google API Key not configured."
-    else:
-        genai.configure(api_key=google_api_key)
-        gemini_model = genai.GenerativeModel('gemini-1.5-flash')
+    # Prepare lists
+    checked_users = channel_data.get("dailyCheckedUsers", [])
+    days_since = channel_data.get("days_since_last", {})
+    last_checkins = channel_data.get("last_checkins", {})
+    user_to_real = channel_data.get("userToReal", {})
 
-    start_time_for_summary_fetch_utc = channel_data.get("last_reset_time")
-    if not start_time_for_summary_fetch_utc or not isinstance(start_time_for_summary_fetch_utc,
-                                                              datetime) or not start_time_for_summary_fetch_utc.tzinfo:
-        guild_settings = await get_guild_settings(guild_id)
-        timezone_str = guild_settings.get("timezone", "America/Los_Angeles")
+    # Identify users in guild
+    guild = bot.get_guild(guild_id)
+    all_members = [m for m in guild.members if not m.bot] if guild else []
+
+    unchecked_users = []
+
+    for member in all_members:
+        uid = member.id
+
+        if uid in checked_users:
+            # Reset to zero if checked in
+            days_since[uid] = 0
+            # Update last check-in time
+            last_checkins[str(uid)] = now_guild_tz.astimezone(pytz.UTC).isoformat()
+
+        else:
+            # User missed today
+            unchecked_users.append(uid)
+            if str(uid) in last_checkins:
+                # Only increment if they have **ever** checked in
+                days_since[uid] = days_since.get(uid, 0) + 1
+            else:
+                # Never checked in → do nothing, continues "Never checked in"
+                pass
+
+    # Persist updated fields
+    channel_data["days_since_last"] = days_since
+    channel_data["last_checkins"] = last_checkins
+    channel_data["dailyCheckedUsers"] = []  # Reset for next day
+
+    # Also update missed check-in leaderboard
+    missed_users = channel_data.get("missed_users", {})
+    for uid in unchecked_users:
+        missed_users[uid] = missed_users.get(uid, 0) + 1
+    channel_data["missed_users"] = missed_users
+
+    # Cleanup users with 0 total checkins
+    channel_data["users"] = {k: v for k, v in channel_data.get("users", {}).items() if v > 0}
+
+    await save_specific_data_to_db(guild_id, channel_id, channel_data)
+
+    # Prepare Check-in leaderboard
+    checkins_by_name = {}
+    for uid, count in channel_data.get("users", {}).items():
         try:
-            guild_tz = pytz.timezone(timezone_str)
-        except pytz.exceptions.UnknownTimeZoneError:
-            guild_tz = pytz.timezone("America/Los_Angeles")
+            u = await bot.fetch_user(uid)
+            real = channel_data.get("userToReal", {}).get(str(uid), u.display_name)
+        except:
+            real = f"Unknown ({uid})"
+        checkins_by_name[real] = count
 
-        start_of_day_guild_tz = now_guild_tz.replace(hour=0, minute=0, second=0, microsecond=0)
-        start_time_for_summary_fetch_utc = start_of_day_guild_tz.astimezone(pytz.utc)
-        print(f"DEBUG: Using fallback start time for summary fetch: {start_time_for_summary_fetch_utc}")
-    else:
-        print(f"DEBUG: Using last_reset_time for summary fetch: {start_time_for_summary_fetch_utc}")
+    sorted_checkins = sorted(checkins_by_name.items(), key=lambda x: x[1], reverse=True)
+    leaderboard_message = "\n".join(
+        f"{i+1}. **{name}**: {c} check-ins"
+        for i, (name, c) in enumerate(sorted_checkins)
+    ) if sorted_checkins else "No valid check-ins recorded."
+
+    # Prepare Missed Check-in leaderboard
+    missed_by_name = {}
+    for uid, missed in missed_users.items():
+        try:
+            u = await bot.fetch_user(uid)
+            real = channel_data.get("userToReal", {}).get(str(uid), u.display_name)
+        except:
+            real = f"Unknown ({uid})"
+        missed_by_name[real] = missed
+
+    sorted_missed = sorted(missed_by_name.items(), key=lambda x: x[1], reverse=True)
+    missed_message = "\n".join(
+        f"{i+1}. **{name}**: {m} misses"
+        for i, (name, m) in enumerate(sorted_missed)
+    ) if sorted_missed else "No missed check-ins."
+
+    # Generate reset summary
+    checked_names = []
+    for uid in checked_users:
+        try:
+            u = await bot.fetch_user(uid)
+            checked_names.append(channel_data.get("userToReal", {}).get(str(uid), u.display_name))
+        except:
+            checked_names.append(f"Unknown ({uid})")
+
+    unchecked_names = []
+    for uid in unchecked_users:
+        try:
+            u = await bot.fetch_user(uid)
+            unchecked_names.append(channel_data.get("userToReal", {}).get(str(uid), u.display_name))
+        except:
+            unchecked_names.append(f"Unknown ({uid})")
+
+    checked_list_str = "\n".join(checked_names) if checked_names else "None"
+    unchecked_list_str = "\n".join(unchecked_names) if unchecked_names else "Everyone checked in!"
 
     channel = bot.get_channel(channel_id)
     if not channel:
-        print(
-            f"WARNING: Channel {channel_id} not found or inaccessible in guild {guild_id}. Cannot send summary or fetch messages.")
-        gemini_summary_text = "Automatic summary failed: Channel not found or accessible."
-    else:
-        # --- MODIFIED PROMPT INSTRUCTION FOR STRUCTURED OUTPUT AND ENHANCED IMAGE RELEVANCE ---
-        content_for_gemini_prompt = [
-            f"Provide a concise summary of the following daily check-ins from Discord users. "
-            f"Start with an 'Overall Summary' (1-3 bullet points on key themes). "
-            f"Then, add a section titled 'Individual Contributions'. "
-            f"For each user, provide a concise summary of their specific check-in, detailing their main activity/update from both text and image (if provided). "
-            f"**Crucial Instruction for Image Relevance & Detail:**\n"
-            f"1.  **Bot Development/Testing Images:** If a user checks in about **developing, debugging, or testing a Discord bot**, and provides an image that appears to be a **screenshot of Discord content (such as bot outputs, embeds, summaries, or command results)**, you **must consider this image highly relevant** to their stated activity. Describe what the image shows (e.g., 'The image displays the bot's summary output, confirming the user's testing of the summary function.') and how it directly relates to their check-in. "
-            f"2.  **Measurements & Values:** If an image contains **clear numerical measurements or values on instruments like beakers, gauges, scales, or thermometers**, and these values are relevant to the user's check-in text (e.g., 'measured x', 'experiment result', 'tracked progress'), you **must precisely read and state the exact value displayed**. For example, if a beaker is shown, state 'The image shows a beaker with approximately [X] mL of liquid.' Pay close attention to scale markings and the liquid's meniscus for accuracy, interpolating between marked values if necessary. "
-            f"3.  **Other Irrelevant Images:** If an image is otherwise irrelevant or a generic photo unrelated to the user's specific text description, explicitly state 'Image: Irrelevant'. "
-            f"4.  **No Image:** If no image was provided, explicitly state 'Image: None provided'. "
-            f"Use bullet points for the overall summary and distinct, nested bullet points for each user's contribution. "
-            f"Example format:\n"
-            f"**Overall Summary:**\n"
-            f"- [Overall theme 1]\n"
-            f"- [Overall theme 2]\n"
-            f"\n"
-            f"**Individual Contributions:**\n"
-            f"- **[User A]**: [Summary of User A's check-in. Image: Relevant description / Irrelevant / None provided.]\n"
-            f"- **[User B]**: [Summary of User B's check-in. Image: Relevant description / Irrelevant / None provided.]\n"
-            f"\nHere are the check-ins:\n"
-        ]
-        # --- END MODIFIED PROMPT INSTRUCTION ---
+        print(f"WARNING: Channel {channel_id} not found — cannot send summary.")
+        return
 
-        checkin_command_string = "c.c"
-
-        try:
-            async for message in channel.history(after=start_time_for_summary_fetch_utc, limit=500):
-                if not message.author.bot and (message.content or message.attachments):
-                    cleaned_content = message.content.strip()
-                    if cleaned_content.lower().startswith(checkin_command_string.lower()):
-                        actual_checkin_content = cleaned_content[len(checkin_command_string):].strip()
-
-                        if actual_checkin_content or message.attachments:
-                            content_for_gemini_prompt.append(
-                                f"\n--- Check-in by {message.author.display_name} ({message.created_at.strftime('%H:%M')}):\n"
-                            )
-                            if actual_checkin_content:
-                                content_for_gemini_prompt.append(actual_checkin_content)
-                            else:
-                                content_for_gemini_prompt.append("[No text provided in check-in message.]")
-
-                            has_image_for_gemini = False
-                            if message.attachments:
-                                for attachment in message.attachments:
-                                    if 'image' in attachment.content_type:
-                                        try:
-                                            image_bytes = await attachment.read()
-                                            pil_image = Image.open(BytesIO(image_bytes))
-                                            content_for_gemini_prompt.append(pil_image)
-                                            has_image_for_gemini = True
-                                            print(
-                                                f"DEBUG: Found and prepared image for {message.author.display_name}'s check-in for Gemini.")
-                                            break
-                                        except Exception as e:
-                                            content_for_gemini_prompt.append(
-                                                f"[Error loading image: {attachment.filename}]")
-                                            print(
-                                                f"ERROR: Could not load image for Gemini for {message.author.display_name}'s check-in ({attachment.filename}): {e}")
-
-                            if not has_image_for_gemini:
-                                content_for_gemini_prompt.append("[No image provided with check-in.]")
-
-            if len(content_for_gemini_prompt) == 1:
-                gemini_summary_text = "No check-in messages (text or image) found since last reset for summarization."
-            elif not google_api_key:
-                gemini_summary_text = "Automatic summary skipped: Google API Key not configured."
-            else:
-                try:
-                    gemini_response = gemini_model.generate_content(content_for_gemini_prompt)
-                    gemini_summary_text = gemini_response.text.strip()
-
-                    if len(gemini_summary_text) > MAX_EMBED_FIELD_LENGTH:
-                        gemini_summary_text = gemini_summary_text[:MAX_EMBED_FIELD_LENGTH - 3] + "..."
-                        print(
-                            f"WARNING: Gemini summary truncated to {MAX_EMBED_FIELD_LENGTH} characters for channel {channel_id}.")
-
-                except Exception as e:
-                    gemini_summary_text = f"Automatic summary failed (Gemini API Error): {e}"
-                    print(f"ERROR: Gemini API Error during automatic summary for channel {channel_id}: {e}")
-
-        except discord.errors.Forbidden:
-            gemini_summary_text = "Automatic summary failed: Bot does not have permission to read message history."
-            print(f"ERROR: Missing permissions to read history in channel {channel_id} of guild {guild_id}.")
-        except discord.errors.HTTPException as e:
-            gemini_summary_text = f"Automatic summary failed (Discord API Error): {e}"
-            print(f"ERROR: Discord API Error fetching messages for summary in channel {channel_id}: {e}")
-        except Exception as e:
-            gemini_summary_text = f"Automatic summary failed (Unexpected Error): {e}"
-            print(f"ERROR: Unexpected error during message fetching for summary in channel {channel_id}: {e}")
-
-    # --- Save the current reset time to the channel data ---
-    channel_data["last_reset_time"] = now_guild_tz.astimezone(pytz.utc)
-
-    # --- Prepare list of users who checked in for the day that just ended ---
-    checked_users_names = []
-    for user_id in channel_data.get("dailyCheckedUsers", []):
-        try:
-            user = await bot.fetch_user(user_id)
-            real_name = channel_data.get("userToReal", {}).get(str(user_id), user.display_name)
-            checked_users_names.append(real_name)
-        except (discord.NotFound, discord.HTTPException):
-            checked_users_names.append(f"Unknown User ({user_id})")
-    checked_users_list_str = "\n".join(checked_users_names) if checked_users_names else "No users checked in today."
-    print(f"DEBUG: Checked users for summary: {checked_users_names}")
-
-    # --- Find users who missed check-in for the day that just ended ---
-    unchecked_user_ids = []
-    unchecked_users_names = []
-    guild = bot.get_guild(guild_id)
-    if guild:
-        for member in guild.members:
-            if not member.bot and member.id not in channel_data.get("banned_users",
-                                                                    set()) and member.id not in channel_data.get(
-                    "dailyCheckedUsers", []):
-                try:
-                    real_name = channel_data.get("userToReal", {}).get(str(member.id), member.display_name)
-                except (discord.NotFound, discord.HTTPException):
-                    real_name = f"Unknown User ({member.id})"
-                unchecked_users_names.append(real_name)
-                unchecked_user_ids.append(member.id)
-    unchecked_list_str = "\n".join(unchecked_users_names) if unchecked_users_names else "Everyone checked in today!"
-    print(f"DEBUG: Unchecked users for summary: {unchecked_users_names}")
-
-    # --- Update missed_users dict (for persistent tracking of consecutive misses) ---
-    missed_users = channel_data.get("missed_users", {})
-    for user_id in unchecked_user_ids:
-        missed_users[user_id] = missed_users.get(user_id, 0) + 1
-    channel_data["missed_users"] = missed_users
-    print(f"DEBUG: Updated missed_users in cache: {channel_data['missed_users']}")
-
-    # --- Reset daily check-ins for the new day (empty the list) ---
-    channel_data["dailyCheckedUsers"] = []
-    print(f"DEBUG: dailyCheckedUsers reset in cache.")
-
-    # --- Clean up 'users' data if check-in count is zero ---
-    # Corrected line for the SyntaxError:
-    channel_data["users"] = {k: v for k, v in channel_data.get("users", {}).items() if v > 0}
-    print(f"DEBUG: Cleaned 'users' data in cache.")
-
-    # --- Save all updated channel data to the database ---
-    await save_specific_data_to_db(guild_id, channel_id, channel_data)
-    print(f"INFO: Channel {channel_id} data saved to DB after reset.")
-
-    # --- Prepare check-in leaderboard for the embed ---
-    checkins_by_real_name = {}
-    for user_id, checkins in channel_data.get("users", {}).items():
-        try:
-            user = await bot.fetch_user(user_id)
-            real_name = channel_data.get("userToReal", {}).get(str(user_id), user.display_name)
-        except (discord.NotFound, discord.HTTPException):
-            real_name = f"Unknown User ({user_id})"
-        checkins_by_real_name[real_name] = checkins_by_real_name.get(real_name, 0) + checkins
-    sorted_checkins = sorted(checkins_by_real_name.items(), key=lambda x: x[1], reverse=True)
-    leaderboard_message = (
-        "\n".join(
-            f"{i + 1}. **{real_name}**: {checkins} check-in(s)"
-            for i, (real_name, checkins) in enumerate(sorted_checkins)
-        )
-        if sorted_checkins else "No valid check-ins recorded."
+    embed = discord.Embed(
+        title=f"Daily Check-in Summary — {formatted_date}",
+        description="Here is the breakdown of today's check-in activity:",
+        color=discord.Color.blue()
     )
-    print(f"DEBUG: Leaderboard message prepared.")
+    embed.add_field(name="Checked-in Users", value=checked_list_str, inline=False)
+    embed.add_field(name="Users Who Missed Today", value=unchecked_list_str, inline=False)
+    embed.add_field(name="Check-in Leaderboard", value=leaderboard_message, inline=False)
+    embed.add_field(name="Missed Check-ins Leaderboard", value=missed_message, inline=False)
+    embed.add_field(name="Reset Notice", value="Daily tracking has been reset.", inline=False)
 
-    # --- Prepare missed check-in leaderboard for the embed ---
-    missed_by_real_name = {}
-    for user_id, missed in channel_data.get("missed_users", {}).items():
-        try:
-            user = await bot.fetch_user(user_id)
-            real_name = channel_data.get("userToReal", {}).get(str(user_id), user.display_name)
-        except (discord.NotFound, discord.HTTPException):
-            real_name = f"Unknown User ({user_id})"
-        missed_by_real_name[real_name] = missed_by_real_name.get(real_name, 0) + missed
-    sorted_missed = sorted(missed_by_real_name.items(), key=lambda x: x[1], reverse=True)
-    missed_leaderboard = (
-        "\n".join(
-            f"{i + 1}. **{real_name}**: {missed} missed check-in(s)"
-            for i, (real_name, missed) in enumerate(sorted_missed)
-        )
-        if sorted_missed else "No missed check-ins."
-    )
-    print(f"DEBUG: Missed leaderboard message prepared.")
+    try:
+        await channel.send(embed=embed)
+        print(f"INFO: Sent reset summary to #{channel_id}")
+    except Exception as e:
+        print(f"ERROR: Could not send reset summary: {e}")
 
-    # --- Send the comprehensive summary embed to the channel ---
-    if channel:
-        embed = discord.Embed(
-            title=f"Daily Check-in Summary — {formatted_date}",
-            description=f"Here is the breakdown of today's check-ins for this channel (<#{channel_id}>):",
-            color=discord.Color.blue()
-        )
-        # Add the AI-generated summary as the first field
-        embed.add_field(name="AI-Generated Daily Summary (since last reset)", value=gemini_summary_text, inline=False)
 
-        # Add the lists of checked-in and unchecked users
-        embed.add_field(name="Checked-in Users", value=checked_users_list_str, inline=False)
-        embed.add_field(name="Users Who Didn't Check-in", value=unchecked_list_str, inline=False)
-
-        # Add the leaderboards
-        embed.add_field(name="Check-in Leaderboard", value=leaderboard_message, inline=False)
-        embed.add_field(name="Missed Check-ins Leaderboard", value=missed_leaderboard, inline=False)
-
-        # Add the reset notice
-        embed.add_field(name="Reset Notice", value="Daily check-in data has been reset for this channel.", inline=False)
-
-        try:
-            await channel.send(embed=embed)
-            print(f"INFO: Sent reset summary to channel {channel_id} in guild {guild_id}.")
-        except discord.errors.Forbidden:
-            print(
-                f"ERROR: Missing permissions to send message in channel {channel_id} of guild {guild_id}. Check bot role permissions.")
-        except discord.errors.HTTPException as e:
-            print(f"ERROR: Error sending message to channel {channel_id} of guild {guild_id}: {e}")
-        except Exception as e:
-            print(
-                f"CRITICAL ERROR: Unexpected error while sending reset summary to channel {channel_id} of guild {guild_id}: {e}")
-    else:
-        print(f"WARNING: Channel {channel_id} not found or inaccessible in guild {guild_id}. Summary not sent.")
 
 
 @bot.event
