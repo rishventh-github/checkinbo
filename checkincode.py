@@ -2310,7 +2310,7 @@ async def _perform_channel_reset(guild_id, channel_id, channel_data, now_guild_t
 
     sorted_missed = sorted(missed_by_name.items(), key=lambda x: x[1], reverse=True)
     missed_message = "\n".join(
-        f"{i+1}. **{name}**: {m} misses"
+        f"{i+1}. **{name}**: {m} missed check-in(s)"
         for i, (name, m) in enumerate(sorted_missed)
     ) if sorted_missed else "No missed check-ins."
 
