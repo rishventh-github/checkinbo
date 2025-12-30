@@ -521,6 +521,7 @@ async def m(ctx):
                   "\n`c.t` - Check who sent a check-in today (channel-specific)"
                   "\n`c.wl` - Leaderboard/Streak for checking in (channel-specific)"
                   "\n`c.ll` - Leaderboard/Streak for NOT checking in (channel-specific)"
+                  "\n`c.dl` - Leaderboard/Streak showing the number of days since a user last checked in (channel-specific)"
                   "\n`c.cr` - Shows the current reset time for this channel and timezone for this guild"
                   "\n\n**Commands only accessible by server admins**:"
                   "\n`c.n` - Tracks certain users/changes usernames to their real names (channel-specific)"
@@ -832,9 +833,14 @@ async def dl(ctx):
     now_local = datetime.now(tz)
 
     for real_id_str, user_id in user_to_real.items():
-        real_id_str = str(real_id_str)
+        # Ensure user_id is a valid integer
+        try:
+            user_id = int(user_id)
+        except ValueError:
+            print(f"WARNING: Invalid user_id '{user_id}' encountered in user_to_real.")
+            continue  # Skip this invalid entry
 
-        user = ctx.guild.get_member(int(user_id))
+        user = ctx.guild.get_member(user_id)
         if not user:
             continue
 
@@ -843,7 +849,8 @@ async def dl(ctx):
             if isinstance(last_time_str, str):
                 try:
                     last_time = datetime.fromisoformat(last_time_str).replace(tzinfo=pytz.UTC)
-                except:
+                except Exception as e:
+                    print(f"ERROR: Could not parse datetime '{last_time_str}' for user {user_id}: {e}")
                     continue
             else:
                 last_time = last_time_str
@@ -897,12 +904,6 @@ async def dl(ctx):
         embed.description += f"{emoji} — **{name}**: {value}\n"
 
     await ctx.send(embed=embed)
-
-
-
-
-
-
 
 
 
