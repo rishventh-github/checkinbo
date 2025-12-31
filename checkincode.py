@@ -832,6 +832,7 @@ async def dl(ctx):
 
     now_local = datetime.now(tz)
 
+    # Ensure the leaderboard reflects updated days for users who missed a check-in
     for real_id_str, user_id in user_to_real.items():
         # Ensure user_id is a valid integer
         try:
@@ -846,6 +847,7 @@ async def dl(ctx):
 
         if real_id_str in last_checkins:
             last_time_str = last_checkins[real_id_str]
+
             if isinstance(last_time_str, str):
                 try:
                     last_time = datetime.fromisoformat(last_time_str).replace(tzinfo=pytz.UTC)
@@ -862,10 +864,12 @@ async def dl(ctx):
             stored = days_data.get(user_id, 0)
             day_count = max(day_diff, stored)
 
+            # Ensure `days_since_last` is updated to reflect the missed check-ins
+            days_data[user_id] = day_count
             leaderboard.append((user.display_name, day_count))
 
         else:
-            # Never checked in — represent as special case (None)
+            # This user never checked in yet, so mark them as a special case
             leaderboard.append((user.display_name, None))
 
     # Sort: first by those with actual days (descending), then by Never Checked In at bottom
@@ -903,7 +907,14 @@ async def dl(ctx):
 
         embed.description += f"{emoji} — **{name}**: {value}\n"
 
+    # Save updated `days_data` back to the database
+    # This ensures that information about missed check-ins persists
+    channel_data["days_since_last"] = days_data
+    await save_channel_data(guild_id, channel_id, channel_data)
+
     await ctx.send(embed=embed)
+
+
 
 
 
